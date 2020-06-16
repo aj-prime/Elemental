@@ -40,6 +40,9 @@ void TranslateBetweenGrids
 ( const DistMatrix<T,MC,MR,ELEMENT,D1>& A, DistMatrix<T,MC,MR,ELEMENT,D2>& B );
 template<typename T,Device D1,Device D2>
 void TranslateBetweenGrids
+( const DistMatrix<T,STAR,VC,ELEMENT,D1>& A, DistMatrix<T,STAR,VC,ELEMENT,D2>& B );
+template<typename T,Device D1,Device D2>
+void TranslateBetweenGrids
 ( DistMatrix<T,STAR,STAR,ELEMENT,D1> const& A,
   DistMatrix<T,STAR,STAR,ELEMENT,D2>& B );
 // The fallback case that simply throws an exception
