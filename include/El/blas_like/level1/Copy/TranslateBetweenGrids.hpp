@@ -390,6 +390,7 @@ void TranslateBetweenGrids
 
 
     Int recvRow = 0;
+    std::cout<<"Height of A:"<<m<<" Width of A:"<<n<<"\n";
 
 
 
@@ -451,7 +452,7 @@ void TranslateBetweenGrids
 
             //Pack Data
             Int sendWidth = Length(nLocA,rowSend,numRowSends);
-            //std::printf("sendWidth from send %d\n", sendWidth);
+            std::printf("sendWidth from send %d Num RowSends%d\n", sendWidth,numRowSends);
             copy::util::InterleaveMatrix(
                     mLocA, sendWidth,
                     A.LockedBuffer(0,rowSend),
@@ -463,7 +464,7 @@ void TranslateBetweenGrids
             sendRequestsUsed[rowSend] = true;
 
             
-            //std::printf("Row Rank %d colRank: %d Rank: %d sending to rank:%d\n",rowRankA,colRankA,mpi::Rank(viewingCommB), recvViewingRank);
+            std::printf("Row Rank %d colRank: %d Rank: %d sending to rank:%d\n",rowRankA,colRankA,mpi::Rank(viewingCommB), recvViewingRank);
             mpi::ISend
             (sendBufVector[rowSend], mLocA*sendWidth, recvViewingRank,
               viewingCommB, sendRequests[rowSend]);
