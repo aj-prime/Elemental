@@ -40,8 +40,46 @@ void TranslateBetweenGrids
 ( const DistMatrix<T,MC,MR,ELEMENT,D1>& A, DistMatrix<T,MC,MR,ELEMENT,D2>& B );
 template<typename T,Device D1,Device D2>
 void TranslateBetweenGrids
+( const DistMatrix<T,STAR,VC,ELEMENT,D1>& A, DistMatrix<T,STAR,VC,ELEMENT,D2>& B );
+
+template<typename T,Device D1,Device D2>
+void TranslateBetweenGrids
 ( DistMatrix<T,STAR,STAR,ELEMENT,D1> const& A,
   DistMatrix<T,STAR,STAR,ELEMENT,D2>& B );
+
+template<typename T, Device D1, Device D2>
+void TranslateBetweenGridsBroadcast
+(DistMatrix<T,STAR,VC,ELEMENT,D1> const& A,
+  std::vector<std::unique_ptr<AbstractDistMatrix<T>>>& B_Vector);
+
+template<typename T, Device D1, Device D2>
+void TranslateBetweenGridsBroadcastOptComm
+(DistMatrix<T,STAR,VC,ELEMENT,D1> const& A,
+  std::vector<std::unique_ptr<AbstractDistMatrix<T>>>& B_Vector,  mpi::Comm const& broadcastComm, SyncInfo<D1> & syncGeneral);
+
+
+template<typename T, Device D1, Device D2>
+void TranslateBetweenGridsAllreduce
+(DistMatrix<T,STAR,VC,ELEMENT,D1> & A,
+  std::vector<std::unique_ptr<AbstractDistMatrix<T>>>& B_Vector);
+
+template<typename T, Device D1, Device D2>
+void TranslateBetweenGridsAllreduceOpt
+(DistMatrix<T,STAR,VC,ELEMENT,D1> & A,
+  std::vector<std::unique_ptr<AbstractDistMatrix<T>>>& B_Vector);
+
+template<typename T, Device D1, Device D2>
+void TranslateBetweenGridsAllreduceOptComm
+(DistMatrix<T,STAR,VC,ELEMENT,D1> & A,
+  std::vector<std::unique_ptr<AbstractDistMatrix<T>>>& B_Vector, mpi::Comm const& allreduceComm, SyncInfo<D1> & syncGeneral);
+
+
+
+
+// void TranslateBetweenGridsBroadcast
+// (DistMatrix<double,STAR,VC,ELEMENT,Device::CPU> const& A,
+//   std::vector<DistMatrix<double,STAR,VC,ELEMENT,Device::CPU>>& B_Vector);
+
 // The fallback case that simply throws an exception
 template<typename T,Dist U,Dist V,Device D1,Device D2>
 void TranslateBetweenGrids
@@ -64,12 +102,12 @@ template<typename T,Dist U,Dist V,
 void TransposeDist( DistMatrix<T,U,V,ELEMENT,Device::CPU> const& A,
                     DistMatrix<T,V,U,ELEMENT,Device::CPU>& B );
 
-#ifdef HYDROGEN_HAVE_CUDA
+#ifdef HYDROGEN_HAVE_GPU
 template<typename T,Dist U,Dist V,
          typename=EnableIf<IsStorageType<T,Device::GPU>>>
 void TransposeDist( DistMatrix<T,U,V,ELEMENT,Device::GPU> const& A,
                     DistMatrix<T,V,U,ELEMENT,Device::GPU>& B );
-#endif // HYDROGEN_HAVE_CUDA
+#endif // HYDROGEN_HAVE_GPU
 
 template<typename T,Dist U,Dist V,Device D,
          typename=DisableIf<IsStorageType<T,D>>,typename=void>
