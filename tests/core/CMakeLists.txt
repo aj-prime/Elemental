@@ -5,6 +5,7 @@ set_full_path(THIS_DIR_SOURCES
   DifferentGrids.cpp
   #DistMatrix.cpp
   Matrix.cpp
+  DifferentGridsGeneralScatter.cpp
   Pow.cpp
   QDToInt.cpp
   SafeDiv.cpp

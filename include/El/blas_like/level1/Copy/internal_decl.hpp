@@ -40,8 +40,56 @@ void TranslateBetweenGrids
 ( const DistMatrix<T,MC,MR,ELEMENT,D1>& A, DistMatrix<T,MC,MR,ELEMENT,D2>& B );
 template<typename T,Device D1,Device D2>
 void TranslateBetweenGrids
+( const DistMatrix<T,STAR,VC,ELEMENT,D1>& A, DistMatrix<T,STAR,VC,ELEMENT,D2>& B );
+
+template<typename T,Device D1,Device D2>
+void TranslateBetweenGrids
 ( DistMatrix<T,STAR,STAR,ELEMENT,D1> const& A,
   DistMatrix<T,STAR,STAR,ELEMENT,D2>& B );
+
+template<typename T, Device D1, Device D2>
+void TranslateBetweenGridsBroadcast
+(DistMatrix<T,STAR,VC,ELEMENT,D1> const& A,
+  std::vector<std::unique_ptr<AbstractDistMatrix<T>>>& B_Vector);
+
+template<typename T, Device D1, Device D2>
+void TranslateBetweenGridsBroadcastOptComm
+(DistMatrix<T,STAR,VC,ELEMENT,D1> const& A,
+  std::vector<std::unique_ptr<AbstractDistMatrix<T>>>& B_Vector,  mpi::Comm const& broadcastComm, SyncInfo<D1> & syncGeneral);
+
+
+template<typename T, Device D1, Device D2>
+void TranslateBetweenGridsAllreduce
+(DistMatrix<T,STAR,VC,ELEMENT,D1> & A,
+  std::vector<std::unique_ptr<AbstractDistMatrix<T>>>& B_Vector);
+
+template<typename T, Device D1, Device D2>
+void TranslateBetweenGridsAllreduceOpt
+(DistMatrix<T,STAR,VC,ELEMENT,D1> & A,
+  std::vector<std::unique_ptr<AbstractDistMatrix<T>>>& B_Vector);
+
+template<typename T, Device D1, Device D2>
+void TranslateBetweenGridsAllreduceOptComm
+(DistMatrix<T,STAR,VC,ELEMENT,D1> & A,
+  std::vector<std::unique_ptr<AbstractDistMatrix<T>>>& B_Vector, mpi::Comm const& allreduceComm, SyncInfo<D1> & syncGeneral);
+
+
+template<typename T, Device D1, Device D2>
+void TranslateBetweenGridsScatterOptComm
+(DistMatrix<T,STAR,VC,ELEMENT,D1> const& A,
+  std::vector<std::unique_ptr<AbstractDistMatrix<T>>>& B_Vector, int splitDim,  mpi::Comm const& ScatterComm, SyncInfo<D1> & syncGeneral);
+
+template<typename T, Device D1, Device D2>
+void TranslateBetweenGridsGatherOptComm
+(DistMatrix<T,STAR,VC,ELEMENT,D1> & A,
+  std::vector<std::unique_ptr<AbstractDistMatrix<T>>>& B_Vector, int splitDim,  mpi::Comm const& gatherComm, SyncInfo<D1> & syncGeneral);
+
+
+
+// void TranslateBetweenGridsBroadcast
+// (DistMatrix<double,STAR,VC,ELEMENT,Device::CPU> const& A,
+//   std::vector<DistMatrix<double,STAR,VC,ELEMENT,Device::CPU>>& B_Vector);
+
 // The fallback case that simply throws an exception
 template<typename T,Dist U,Dist V,Device D1,Device D2>
 void TranslateBetweenGrids
