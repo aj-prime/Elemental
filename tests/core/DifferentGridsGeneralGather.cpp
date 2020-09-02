@@ -182,11 +182,9 @@ main( int argc, char* argv[] )
 
         duration_all =0;
         for(Int i=0 ;i< iters; ++i){
-            //A*=2;
-            // mpi::Barrier();
+
             auto start = std::chrono::high_resolution_clock::now();
             
-            //El::copy::TranslateBetweenGridsScatterOptComm<double,D,D>(A,B_vector,slice_dim,allreduceComm,syncGeneral);
             El::copy::TranslateBetweenGridsScatter<double,D,D>(A,B_vector,slice_dim,allreduceComm,syncGeneral);
 
             if(GPU)
@@ -238,8 +236,7 @@ main( int argc, char* argv[] )
 
         duration_all =0;
         for(Int i=0 ;i< iters; ++i){
-            //A*=2;
-            // mpi::Barrier();
+
             auto start = std::chrono::high_resolution_clock::now();
             
             El::copy::TranslateBetweenGridsGather<double,D,D>(concat,B_vector,slice_dim/(numSubGrids*numMatrix),allreduceComm,syncGeneral1,2);
@@ -287,7 +284,7 @@ main( int argc, char* argv[] )
             if( print )
                 Print( *B_vector[0], "B_vector[0]" );
         }
-        //A = ASqrt;
+
 
         if( print &&  B_vector[1]->Participating() )
             Print( *B_vector[1], "B_vector[1]" );

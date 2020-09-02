@@ -39,7 +39,7 @@ main( int argc, char* argv[] )
         const Int m = Input("--height","height of matrix",50);
         const Int n = Input("--width","width of matrix",100);
         const bool print = Input("--print","print matrices?",false);
-        //const bool GPU = Input("--print","data on GPU?",false);
+
         const Int iters = Input("--iters","Iterations (default:100)?",100);
         const Int grid1_width = Input("--g1Width","width of grid 1?",1);
         const Int grid2_width = Input("--g2Width","width of grid 2?",1);
@@ -48,8 +48,6 @@ main( int argc, char* argv[] )
         const Int warmup = Input("--warmup","warmup iterations?",10);
         const Int numVectors = Input("--numvectors","number of vectors?",10);
 
-        //bool grid2_order = Input("--g2order","Start Grid2 from Process 0?",false);
-        //grid2_order = true;
         ProcessInput();
         PrintInputReport();
 
@@ -112,20 +110,10 @@ main( int argc, char* argv[] )
 
 
 
-
-        
-
- 
-
-        // A is distibuted on Grid1, ASqrt is distributed Grid2.
-        
-         // auto const D = (GPU ? (Device::GPU) : (Device::CPU));
         
         DistMatrix<double,STAR,VC,ELEMENT,D> A(grid),  A_temp(grid);
 
-        
 
-        //std::vector <DistMatrix<double,STAR,VC,ELEMENT,D>> B_vector(numVectors);
         std::vector<std::unique_ptr<AbstractDistMatrix<double>>> B_vector;
         B_vector.resize(numVectors);
         temp_count = 0;
@@ -142,8 +130,7 @@ main( int argc, char* argv[] )
 
         for(Int i = 0; i<numVectors; ++i)
         {
-            //B_vector.push_back(new DistMatrix<double,STAR,VC,ELEMENT,D>(*gridsVector[i]));
-            //B_vector[i].SetGrid(*gridsVector[i]);
+
             
 
             if(B_vector[i]->Participating())
@@ -161,62 +148,10 @@ main( int argc, char* argv[] )
         mpi::Split(mpi::NewWorldComm(), posInSubGrid, rank, allreduceComm);
         SyncInfo<D> syncGeneral = SyncInfo<D>();
 
-        // B_vector.push_back(B1);
-        // B_vector.push_back(B2);
-        
-        
-        //DistMatrix<double> A(grid), ASqrt(sqrtGrid_sec);
-        // if(B_vector[0].Participating())
-        // {
-        //     Identity(B_vector[0],m,n);
-        //     for(Int i =0 ; i < m; ++i)
-        //     {
-        //         if(i<n)
-        //         {
-        //             B_vector[0].Set(i,i,i);
-        //         }
-        //     }
-        // }
-        // else if(B_vector[1].Participating())
-        // {
-        //     Identity(B_vector[1],m,n);
-        //     for(Int i =0 ; i < m; ++i)
-        //     {
-        //         if(i<n)
-        //         {
-        //             B_vector[1].Set(i,i,i);
-        //         }
-        //     }
-        // }
-        
-        //Identity( A, m, n );
-
-        // for(Int i =0 ; i < m; ++i)
-        // {
-        //     if(i<n)
-        //     {
-        //         A.Set(i,i,i);
-        //     }
-        // }
-        
-        
-        
-        // SyncInfo<D> syncInfoA = SyncInfoFromMatrix(A.LockedMatrix());
-        // Int indexB = -1;
-        // if(B_vector[0].Participating())
-        // {
-        //     indexB=0;
-        // }
-        // else
-        // {
-        //     indexB=1;
-        // }
-        // SyncInfo<D> syncInfoB = SyncInfoFromMatrix(B_vector[indexB].LockedMatrix());
             
         auto duration_all =0;
         for(Int i=0 ;i< iters; ++i){
-            //A*=2;
-            // mpi::Barrier();
+
             auto start = std::chrono::high_resolution_clock::now();
             
             El::copy::TranslateBetweenGridsBroadcast<double,D,D>(A,B_vector);
@@ -246,8 +181,7 @@ main( int argc, char* argv[] )
 
         duration_all =0;
         for(Int i=0 ;i< iters; ++i){
-            //A*=2;
-            // mpi::Barrier();
+
             auto start = std::chrono::high_resolution_clock::now();
             
             El::copy::TranslateBetweenGridsBroadcast<double,D,D>(A,B_vector,allreduceComm,syncGeneral);
@@ -256,13 +190,10 @@ main( int argc, char* argv[] )
             {
                 cudaDeviceSynchronize();
             }
-            //mpi::Barrier();
+
             auto end = std::chrono::high_resolution_clock::now();
 
-
-
             auto duration = duration_cast<std::chrono::microseconds>(end - start); 
-            //std::cout<<"here:"<<duration.count()<<"\n";
             if(i>warmup)
             {
                 duration_all = duration_all+duration.count();
@@ -291,9 +222,7 @@ main( int argc, char* argv[] )
             
             for(Int j=0; j<numVectors;++j)
             {
-                *(dynamic_cast<DistMatrix<double,STAR,VC,ELEMENT,D>*>(&(*B_vector[j])) ) = A;
-
-                
+                *(dynamic_cast<DistMatrix<double,STAR,VC,ELEMENT,D>*>(&(*B_vector[j])) ) = A;   
 
             }
             if(GPU)
@@ -322,15 +251,12 @@ main( int argc, char* argv[] )
             if( print )
                 Print( *B_vector[0], "B_vector[0]" );
         }
-        //A = ASqrt;
+
 
         if( print &&  B_vector[1]->Participating() )
             Print( *B_vector[1], "B_vector[1]" );
 
-        //const Grid newGrid( mpi::NewWorldComm(), order );
-        //A.SetGrid( newGrid );
-        //if( print )
-            //Print( A, "A after changing grid" );
+
 
         if( A.Participating() && print)
         {

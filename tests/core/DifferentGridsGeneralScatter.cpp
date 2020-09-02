@@ -39,7 +39,6 @@ main( int argc, char* argv[] )
         const Int m = Input("--height","height of matrix",50);
         const Int n = Input("--width","width of matrix",100);
         const bool print = Input("--print","print matrices?",false);
-        //const bool GPU = Input("--print","data on GPU?",false);
         const Int iters = Input("--iters","Iterations (default:100)?",100);
         const Int grid1_width = Input("--g1Width","width of grid 1?",1);
         const Int grid1_height = Input("--g1Height","height of grid 1?",2);
@@ -48,8 +47,6 @@ main( int argc, char* argv[] )
         const Int numMatrix = Input("--numMatrix","number of matrices per subgrid?",2);
         const Int slice_dim = Input("--dim","dimension of slice dim?",2);
 
-        //bool grid2_order = Input("--g2order","Start Grid2 from Process 0?",false);
-        //grid2_order = true;
         ProcessInput();
         PrintInputReport();
 
@@ -106,21 +103,10 @@ main( int argc, char* argv[] )
         }
 
 
-
-
-        
-
- 
-
-        // A is distibuted on Grid1, ASqrt is distributed Grid2.
-        
-         // auto const D = (GPU ? (Device::GPU) : (Device::CPU));
         
         DistMatrix<double,STAR,VC,ELEMENT,D> A(grid),  A_temp(grid);
 
-        
 
-        //std::vector <DistMatrix<double,STAR,VC,ELEMENT,D>> B_vector(numSubGrids);
         std::vector<std::unique_ptr<AbstractDistMatrix<double>>> B_vector;
         B_vector.resize(numSubGrids*numMatrix);
         temp_count = 0;
@@ -142,10 +128,7 @@ main( int argc, char* argv[] )
         Int posInSubGrid = -1;
 
         for(Int i = 0; i<numSubGrids*numMatrix; ++i)
-        {
-            //B_vector.push_back(new DistMatrix<double,STAR,VC,ELEMENT,D>(*gridsVector[i]));
-            //B_vector[i].SetGrid(*gridsVector[i]);
-            
+        {            
 
             if(B_vector[i]->Participating())
             {
@@ -181,18 +164,16 @@ main( int argc, char* argv[] )
 
         duration_all =0;
         for(Int i=0 ;i< iters; ++i){
-            //A*=2;
-            // mpi::Barrier();
+
             auto start = std::chrono::high_resolution_clock::now();
             
-            //El::copy::TranslateBetweenGridsScatterOptComm<double,D,D>(A,B_vector,slice_dim,allreduceComm,syncGeneral);
             El::copy::TranslateBetweenGridsScatter<double,D,D>(A,B_vector,slice_dim,allreduceComm,syncGeneral);
 
             if(GPU)
             {
                 cudaDeviceSynchronize();
             }
-            //mpi::Barrier();
+
             auto end = std::chrono::high_resolution_clock::now();
 
 
@@ -212,8 +193,7 @@ main( int argc, char* argv[] )
 
         duration_all =0;
         for(Int i=0 ;i< iters; ++i){
-            //A*=2;
-            // mpi::Barrier();
+
             auto start = std::chrono::high_resolution_clock::now();
             
             El::copy::TranslateBetweenGridsScatter<double,D,D>(A,B_vector,slice_dim,allreduceComm,syncGeneral,2);
@@ -222,7 +202,7 @@ main( int argc, char* argv[] )
             {
                 cudaDeviceSynchronize();
             }
-            //mpi::Barrier();
+
             auto end = std::chrono::high_resolution_clock::now();
 
 
@@ -244,8 +224,7 @@ main( int argc, char* argv[] )
 
         duration_all =0;
         for(Int i=0 ;i< iters; ++i){
-            //A*=2;
-            // mpi::Barrier();
+
             auto start = std::chrono::high_resolution_clock::now();
             
             El::copy::TranslateBetweenGridsScatter<double,D,D>(A,B_vector,slice_dim,allreduceComm,syncGeneral,1);
@@ -254,7 +233,6 @@ main( int argc, char* argv[] )
             {
                 cudaDeviceSynchronize();
             }
-            //mpi::Barrier();
             auto end = std::chrono::high_resolution_clock::now();
 
 
@@ -295,15 +273,11 @@ main( int argc, char* argv[] )
             if( print )
                 Print( *B_vector[0], "B_vector[0]" );
         }
-        //A = ASqrt;
 
         if( print &&  B_vector[1]->Participating() )
             Print( *B_vector[1], "B_vector[1]" );
 
-        //const Grid newGrid( mpi::NewWorldComm(), order );
-        //A.SetGrid( newGrid );
-        //if( print )
-            //Print( A, "A after changing grid" );
+
 
         if( A.Participating() && print)
         {

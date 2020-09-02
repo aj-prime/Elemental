@@ -131,8 +131,7 @@ main( int argc, char* argv[] )
 
         for(Int i = 0; i<numSubGrids*numMatrix; ++i)
         {
-            //B_vector.push_back(new DistMatrix<double,STAR,VC,ELEMENT,D>(*gridsVector[i]));
-            //B_vector[i].SetGrid(*gridsVector[i]);
+
             
 
             if(B_vector[i]->Participating())
@@ -162,79 +161,25 @@ main( int argc, char* argv[] )
         mpi::Split(mpi::NewWorldComm(), posInSubGrid, rank, allreduceComm);
         SyncInfo<D> syncGeneral = SyncInfo<D>();
 
-        // B_vector.push_back(B1);
-        // B_vector.push_back(B2);
-        
-        
-        //DistMatrix<double> A(grid), ASqrt(sqrtGrid_sec);
-        // if(B_vector[0].Participating())
-        // {
-        //     Identity(B_vector[0],m,n);
-        //     for(Int i =0 ; i < m; ++i)
-        //     {
-        //         if(i<n)
-        //         {
-        //             B_vector[0].Set(i,i,i);
-        //         }
-        //     }
-        // }
-        // else if(B_vector[1].Participating())
-        // {
-        //     Identity(B_vector[1],m,n);
-        //     for(Int i =0 ; i < m; ++i)
-        //     {
-        //         if(i<n)
-        //         {
-        //             B_vector[1].Set(i,i,i);
-        //         }
-        //     }
-        // }
-        
-        //Identity( A, m, n );
 
-        // for(Int i =0 ; i < m; ++i)
-        // {
-        //     if(i<n)
-        //     {
-        //         A.Set(i,i,i);
-        //     }
-        // }
-        
-        
-        
-        // SyncInfo<D> syncInfoA = SyncInfoFromMatrix(A.LockedMatrix());
-        // Int indexB = -1;
-        // if(B_vector[0].Participating())
-        // {
-        //     indexB=0;
-        // }
-        // else
-        // {
-        //     indexB=1;
-        // }
-        // SyncInfo<D> syncInfoB = SyncInfoFromMatrix(B_vector[indexB].LockedMatrix());
             
         auto duration_all =0;
         for(Int i=0 ;i< iters; ++i){
-            //A*=2;
-            // mpi::Barrier();
+
             auto start = std::chrono::high_resolution_clock::now();
             
             El::copy::TranslateBetweenGridsAllreduce<double,D,D>(A,B_vector,1);
-            //El::copy::TranslateBetweenGrids<double,D,D>(A,B1);
-            //El::copy::TranslateBetweenGridsBroadcast(A,B_vector);
+
             if(GPU)
             {
                 cudaDeviceSynchronize();
             }
             
-            //mpi::Barrier();
             auto end = std::chrono::high_resolution_clock::now();
 
 
 
             auto duration = duration_cast<std::chrono::microseconds>(end - start); 
-            //std::cout<<"here:"<<duration.count()<<"\n";
             if(i>warmup)
             {
                 duration_all = duration_all+duration.count();
@@ -248,8 +193,6 @@ main( int argc, char* argv[] )
 
 
         for(Int i=0 ;i< iters; ++i){
-            //A*=2;
-            // mpi::Barrier();
             auto start = std::chrono::high_resolution_clock::now();
             
             El::copy::TranslateBetweenGridsAllreduce<double,D,D>(A,B_vector,2);
@@ -257,14 +200,11 @@ main( int argc, char* argv[] )
             {
                 cudaDeviceSynchronize();
             }
-            //El::copy::TranslateBetweenGrids<double,D,D>(A,B1);
-            //El::copy::TranslateBetweenGridsBroadcast(A,B_vector);
-            //mpi::Barrier();
+
             auto end = std::chrono::high_resolution_clock::now();
 
 
             auto duration = duration_cast<std::chrono::microseconds>(end - start); 
-            //std::cout<<"here:"<<duration.count()<<"\n";
             if(i>warmup)
             {
                 duration_all = duration_all+duration.count();
@@ -280,8 +220,7 @@ main( int argc, char* argv[] )
 
 
         for(Int i=0 ;i< iters; ++i){
-            //A*=2;
-            // mpi::Barrier();
+
             auto start = std::chrono::high_resolution_clock::now();
             
             El::copy::TranslateBetweenGridsAllreduce<double,D,D>(A,B_vector,allreduceComm,syncGeneral);
@@ -289,14 +228,11 @@ main( int argc, char* argv[] )
             {
                 cudaDeviceSynchronize();
             }
-            //El::copy::TranslateBetweenGrids<double,D,D>(A,B1);
-            //El::copy::TranslateBetweenGridsBroadcast(A,B_vector);
-            //mpi::Barrier();
+
             auto end = std::chrono::high_resolution_clock::now();
 
 
             auto duration = duration_cast<std::chrono::microseconds>(end - start); 
-            //std::cout<<"here:"<<duration.count()<<"\n";
             if(i>warmup)
             {
                 duration_all = duration_all+duration.count();
@@ -307,15 +243,6 @@ main( int argc, char* argv[] )
         double alpha = 1;
         std::cout << "Rank:"<<rank<< " Total Time taken AllreduceOptComm(A<-B):" << duration_all/(iters-warmup) << endl; 
 
-
-
-        
-        
-
-        //const Grid newGrid( mpi::NewWorldComm(), order );
-        //A.SetGrid( newGrid );
-        //if( print )
-            //Print( A, "A after changing grid" );
 
         if( A.Participating() && print)
         {
