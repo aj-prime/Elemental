@@ -48,9 +48,19 @@ void TranslateBetweenGrids
   DistMatrix<T,STAR,STAR,ELEMENT,D2>& B );
 
 template<typename T, Device D1, Device D2>
-void TranslateBetweenGridsBroadcast
+void TranslateBetweenGridsBroadcastBasic
 (DistMatrix<T,STAR,VC,ELEMENT,D1> const& A,
   std::vector<std::unique_ptr<AbstractDistMatrix<T>>>& B_Vector);
+
+template<typename T, Device D1, Device D2>
+void TranslateBetweenGridsBroadcast
+(DistMatrix<T,STAR,VC,ELEMENT,D1> const& A,
+  std::vector<std::unique_ptr<AbstractDistMatrix<T>>>& B_Vector, int version=0);
+
+template<typename T, Device D1, Device D2>
+void TranslateBetweenGridsBroadcast
+(DistMatrix<T,STAR,VC,ELEMENT,D1> const& A,
+  std::vector<std::unique_ptr<AbstractDistMatrix<T>>>& B_Vector, mpi::Comm const& broadcastComm, SyncInfo<D1> & syncGeneral, int version=0);
 
 template<typename T, Device D1, Device D2>
 void TranslateBetweenGridsBroadcastOptComm
@@ -60,6 +70,16 @@ void TranslateBetweenGridsBroadcastOptComm
 
 template<typename T, Device D1, Device D2>
 void TranslateBetweenGridsAllreduce
+(DistMatrix<T,STAR,VC,ELEMENT,D1> & A,
+  std::vector<std::unique_ptr<AbstractDistMatrix<T>>>& B_Vector, mpi::Comm const& allreduceComm, SyncInfo<D1> & syncGeneral, int version=0);
+
+template<typename T, Device D1, Device D2>
+void TranslateBetweenGridsAllreduce
+(DistMatrix<T,STAR,VC,ELEMENT,D1> & A,
+  std::vector<std::unique_ptr<AbstractDistMatrix<T>>>& B_Vector, int version=0);
+
+template<typename T, Device D1, Device D2>
+void TranslateBetweenGridsAllreduceBasic
 (DistMatrix<T,STAR,VC,ELEMENT,D1> & A,
   std::vector<std::unique_ptr<AbstractDistMatrix<T>>>& B_Vector);
 
@@ -85,6 +105,17 @@ void TranslateBetweenGridsScatterComm
   std::vector<std::unique_ptr<AbstractDistMatrix<T>>>& B_Vector, int splitDim,  mpi::Comm const& ScatterComm, SyncInfo<D1> & syncGeneral);
 
 template<typename T, Device D1, Device D2>
+void TranslateBetweenGridsSliceGatherOptComm
+(DistMatrix<T,STAR,VC,ELEMENT,D1> const& A,
+  std::vector<std::unique_ptr<AbstractDistMatrix<T>>>& B_Vector, int splitDim,  mpi::Comm const& gatherComm, SyncInfo<D1> & syncGeneral);
+
+template<typename T, Device D1, Device D2>
+void TranslateBetweenGridsScatter
+(DistMatrix<T,STAR,VC,ELEMENT,D1> const& A,
+  std::vector<std::unique_ptr<AbstractDistMatrix<T>>>& B_Vector, int splitDim,  mpi::Comm const& ScatterComm, SyncInfo<D1> & syncGeneral, int version=0);
+
+
+template<typename T, Device D1, Device D2>
 void TranslateBetweenGridsGatherOptComm
 (DistMatrix<T,STAR,VC,ELEMENT,D1> & A,
   std::vector<std::unique_ptr<AbstractDistMatrix<T>>>& B_Vector, int splitDim,  mpi::Comm const& gatherComm, SyncInfo<D1> & syncGeneral);
@@ -95,9 +126,26 @@ void TranslateBetweenGridsGatherComm
   std::vector<std::unique_ptr<AbstractDistMatrix<T>>>& B_Vector, int splitDim,  mpi::Comm const& gatherComm, SyncInfo<D1> & syncGeneral);
 
 template<typename T, Device D1, Device D2>
-void TranslateBetweenGridsSliceGatherOptComm
+void TranslateBetweenGridsGather
+(DistMatrix<T,STAR,VC,ELEMENT,D1> & A,
+  std::vector<std::unique_ptr<AbstractDistMatrix<T>>>& B_Vector, int splitDim,  mpi::Comm const& gatherComm, SyncInfo<D1> & syncGeneral, int version=0);
+
+
+template<typename T, Device D1, Device D2>
+void TranslateBetweenGridsSliceColVector
 (DistMatrix<T,STAR,VC,ELEMENT,D1> const& A,
-  std::vector<std::unique_ptr<AbstractDistMatrix<T>>>& B_Vector, int splitDim,  mpi::Comm const& gatherComm, SyncInfo<D1> & syncGeneral);
+  std::vector<std::unique_ptr<AbstractDistMatrix<T>>>& B_Vector);
+
+template<typename T>
+void TranslateBetweenGridsSliceCol
+(AbstractDistMatrix<T> const& A,
+  AbstractDistMatrix<T> & B);
+
+
+template<typename T, Device D1, Device D2>
+void TranslateBetweenGridsAsync
+(DistMatrix<T,STAR,VC,ELEMENT,D1> const& A,
+  DistMatrix<T,STAR,VC,ELEMENT,D2>& B);
 
 
 // void TranslateBetweenGridsBroadcast
