@@ -331,8 +331,8 @@ void TranslateBetweenGridsAllreduceBasic
     const bool inBGrid = indexB >=0 ? true:false;
 
     const Int maxSendSize = mLocB * nLocB;
-    simple_buffer<T,D1> send_buf(inAGrid ? maxSendSize : 0, syncInfoA);
-    simple_buffer<T,D2> recv_buf(inBGrid ? maxSendSize : 0, syncInfoB);
+    simple_buffer<T,D1> send_buf(maxSendSize , syncInfoB);
+    simple_buffer<T,D2> recv_buf(maxSendSize , syncInfoA);
     T* sendBuf = send_buf.data();
     T* recvBuf = recv_buf.data();
 
@@ -356,18 +356,22 @@ void TranslateBetweenGridsAllreduceBasic
         Synchronize(syncGeneral);
         mpi::AllReduce( sendBuf, recvBuf, maxSendSize, mpi::SUM, viewingCommA,syncInfoB);
 
-        if(require_data[localRankB])
+        if(inAGrid)
         {
-            int sendWidth = int(n / rowLCM);
-            copy::util::InterleaveMatrix(
-                            m, sendWidth,
-                            recvBuf + (index_from[localRankB] * m ) , 1, m*(rowLCM/sizeB),
-                            A.Buffer(0,index_to_put[localRankB]),
-                            1, (rowLCM/sizeA)*A.LDim(),
-                            syncInfoA);
+            if(require_data[localRankB])
+            {
+                int sendWidth = int(n / rowLCM);
+                copy::util::InterleaveMatrix(
+                                m, sendWidth,
+                                recvBuf + (index_from[localRankB] * m ) , 1, m*(rowLCM/sizeB),
+                                A.Buffer(0,index_to_put[localRankB]),
+                                1, (rowLCM/sizeA)*A.LDim(),
+                                syncInfoA);
 
+            }
+            Synchronize(syncInfoA);
         }
-        Synchronize(syncInfoA);
+        
 
     }
     Synchronize(syncInfoA);
@@ -451,8 +455,8 @@ void TranslateBetweenGridsAllreduceOptComm
     const bool inBGrid = indexB >=0 ? true:false;
 
     const Int maxSendSize = mLocB * nLocB;
-    simple_buffer<T,D1> send_buf(inAGrid ? maxSendSize : 0, syncInfoA);
-    simple_buffer<T,D2> recv_buf(inBGrid ? maxSendSize : 0, syncInfoB);
+    simple_buffer<T,D1> send_buf(maxSendSize, syncInfoB);
+    simple_buffer<T,D2> recv_buf(maxSendSize, syncInfoA);
     T* sendBuf = send_buf.data();
     T* recvBuf = recv_buf.data();
 
@@ -527,7 +531,7 @@ void TranslateBetweenGridsAllreduceOpt
     const Int nLocB = B->LocalWidth();
 
     const Int posInSubGrid = B->Grid().VCRank();
-    const Int posInGrid = A.Grid().VCRank();
+    const Int posInGrid = A.Grid().ViewingRank();
     A.Resize(m,n); 
     
 
@@ -554,8 +558,8 @@ void TranslateBetweenGridsAllreduceOpt
     const bool inBGrid = indexB >=0 ? true:false;
 
     const Int maxSendSize = mLocB * nLocB;
-    simple_buffer<T,D1> send_buf(inAGrid ? maxSendSize : 0, syncInfoA);
-    simple_buffer<T,D2> recv_buf(inBGrid ? maxSendSize : 0, syncInfoB);
+    simple_buffer<T,D1> send_buf(maxSendSize, syncInfoB);
+    simple_buffer<T,D2> recv_buf(maxSendSize, syncInfoA);
     T* sendBuf = send_buf.data();
     T* recvBuf = recv_buf.data();
 
@@ -783,8 +787,6 @@ void TranslateBetweenGridsScatterComm
     }
 
 }
-
-
 
 
 // FIX ME using interleave operation for transpose
@@ -1109,6 +1111,782 @@ void TranslateBetweenGridsSliceGatherOptComm
 
 }
 
+
+
+template<typename T, Device D1, Device D2>
+void TranslateBetweenGridsScatterCommParentSmall
+(DistMatrix<T,STAR,VC,ELEMENT,D1> const& A,
+  std::vector<std::unique_ptr<AbstractDistMatrix<T>>>& B_Vector, int splitDim,  mpi::Comm const& ScatterComm, SyncInfo<D1> & syncGeneral)
+{
+    /*
+    Scatter data in Column-Major ordering along the last dimension 
+    Last dimension should be divisible number of child layers
+    Size of B_vector is equal to the number of child layers 
+
+    A : 0 1 2 3
+    B1: 0 1 
+    B2: 2 3
+    B3: 4 5 
+    B4: 6 7 
+    
+
+    */
+    EL_DEBUG_CSE
+    Int m = A.Height();
+    Int n = A.Width();
+    Int mLocA = A.LocalHeight();
+    Int nLocA = A.LocalWidth();
+
+    mpi::Comm const& viewingCommA = A.Grid().ViewingComm();
+    mpi::Group owningGroupA = A.Grid().OwningGroup();
+
+
+    Int rowStrideA = A.RowStride();
+
+
+    const Int numChildLayers = int(B_Vector.size());
+    const Int sizeA = A.Grid().VCSize();
+
+
+
+    SyncInfo<D1> syncGeneralMetaData = SyncInfo<D1>();
+    const bool inAGrid = A.Participating();
+    
+    Int recvMetaData[4];
+
+    Int metaData[4];
+    if(inAGrid)
+    {
+        
+        metaData[0] = m;
+        metaData[1] = n;
+        metaData[2] = mLocA;
+        metaData[3] = nLocA;     
+    }
+    else
+    {
+        metaData[0] = 0;
+        metaData[1] = 0;
+        metaData[2] = 0;
+        metaData[3] = 0;
+    }
+
+    
+    
+    const std::vector<Int> sendMetaData (metaData,metaData + 4 );
+
+    
+    SyncInfo<D1> syncInfoA = SyncInfoFromMatrix(A.LockedMatrix());
+    Synchronize(syncGeneral);
+    
+
+    mpi::AllReduce( sendMetaData.data(), recvMetaData, 4, mpi::MAX, viewingCommA,syncGeneralMetaData);
+    Synchronize(syncGeneralMetaData);
+
+    m = recvMetaData[0];
+    n = recvMetaData[1];
+    mLocA = recvMetaData[2];
+    nLocA = recvMetaData[3];
+
+
+    for(Int i=0; i<numChildLayers;++i)
+    {
+        B_Vector[i]->Resize(int(m/numChildLayers),n);
+    }
+
+    
+    if(m%splitDim != 0)
+    {
+        LogicError("TranslateBetweenGridsScatterCommParentSmall: ",
+                   "feature dimension should be divisible by split dimension");
+    }
+    if(splitDim%numChildLayers!=0)
+    {
+        LogicError("TranslateBetweenGridsScatterCommParentSmall: ",
+                   "Split dimension must be divisible by number of children layers or number of splits");
+    }
+
+
+    const Int scatterCommSize = mpi::Size( ScatterComm );
+    const int sendCounts = int((mLocA*nLocA)/scatterCommSize);
+    const int numMatricesInSubGrid  = int(numChildLayers / scatterCommSize);
+
+    std::vector<Int> indexBVec;
+
+    for(Int i = 0; i<numChildLayers; ++i)
+    {
+        if(B_Vector[i]->Participating())
+        {
+            indexBVec.push_back(i);
+
+        }
+    }
+    const Int indexB = indexBVec[0];
+    DistMatrix<T,STAR,VC,ELEMENT,D2>* B = dynamic_cast<DistMatrix<T,STAR,VC,ELEMENT,D2>*>( &(*B_Vector[indexB]));
+    Matrix<T,D2> conversionMatrix(mLocA,nLocA), transposedMatrix(int((mLocA*nLocA)/splitDim),splitDim), recvTransposedMatrix(int((mLocA*nLocA)/splitDim),int(splitDim/scatterCommSize));
+
+    if(inAGrid)
+    {
+        Copy(A.LockedMatrix(), conversionMatrix);
+
+        conversionMatrix.Resize(splitDim, int((mLocA*nLocA)/splitDim));
+
+        Transpose(conversionMatrix,transposedMatrix);
+    }
+    
+
+    conversionMatrix.Resize(int(mLocA/scatterCommSize),nLocA);
+
+    const Int rowStrideB = B->RowStride();
+    const Int sizeB = B->Grid().VCSize();
+    const Int rowGCD = GCD(rowStrideB, rowStrideA);
+    const Int rowLCM = rowStrideB*rowStrideA / rowGCD;
+    const Int posInGrid = A.Grid().VCRank();
+
+    const Int numRanksToRecv = sizeA / sizeB;
+
+    if(sizeA%sizeB!= 0)
+    {
+        LogicError("TranslateBetweenGridsScatterCommParentSmall: ",
+                   "Number of processes in A grid should be divided by subgrid size");
+    }
+
+
+    // Parent Subgrid Size: 4 Child Subgrid Size: 3
+    // Parent 0 1 2 3 0 1 2 3 0 1 2 3 
+    // Child  0 1 2 0 1 2 0 1 2 0 1 2
+    std::vector<int> index_to_put(sizeA,-1);
+
+    for(Int i = 0; i < int(rowLCM/sizeB); ++i)
+    {       
+        index_to_put[i] = i;
+    }
+
+
+    SyncInfo<D2> syncInfoB = SyncInfoFromMatrix(recvTransposedMatrix);
+
+    
+    int partialHeight = int(splitDim/ scatterCommSize);
+    int partialChildHeight = int(partialHeight / numMatricesInSubGrid);
+
+    conversionMatrix.Resize(partialChildHeight,nLocA);
+
+    for(Int localDataRankA = 0; localDataRankA < int(rowLCM/sizeB); localDataRankA++)
+    {
+
+        //comm is useless parameter in this function 
+        //Aluminum infer comm from sync object 
+        
+
+       
+        mpi::Scatter((T *)transposedMatrix.Buffer(), sendCounts, (T *)recvTransposedMatrix.Buffer(), sendCounts, localDataRankA, ScatterComm,
+               syncGeneral);
+
+        Synchronize(syncGeneral);
+
+        int sendWidth = int(n / rowLCM);
+
+        for(Int childLayerSubGrid = 0; childLayerSubGrid < numMatricesInSubGrid; ++childLayerSubGrid)
+        {
+            Transpose(recvTransposedMatrix( Range<Int>(0,sendWidth*(mLocA/splitDim)),Range<Int>(partialChildHeight*childLayerSubGrid, partialChildHeight*(childLayerSubGrid+1))),conversionMatrix);
+            copy::util::InterleaveMatrix(
+                        partialChildHeight*(mLocA/splitDim), sendWidth,
+                        conversionMatrix.Buffer()  , 1, partialChildHeight*(mLocA/splitDim),
+                        dynamic_cast<DistMatrix<T,STAR,VC,ELEMENT,D2>*>( &(*B_Vector[indexBVec[childLayerSubGrid]]))->Buffer(0,localDataRankA),
+                        1, dynamic_cast<DistMatrix<T,STAR,VC,ELEMENT,D2>*>( &(*B_Vector[indexBVec[childLayerSubGrid]]))->LDim() * int(rowLCM/sizeB),
+                        syncInfoB);
+        }
+
+        
+        Synchronize(syncInfoB);
+
+
+
+    }
+
+}
+
+
+
+template<typename T, Device D1, Device D2>
+void TranslateBetweenGridsSliceGatherParentSmall
+(DistMatrix<T,STAR,VC,ELEMENT,D1> const& A,
+  std::vector<std::unique_ptr<AbstractDistMatrix<T>>>& B_Vector, int splitDim,  mpi::Comm const& gatherComm, SyncInfo<D1> & syncGeneral)
+{
+    /*
+    Scatter data in Column-Major ordering along the last dimension 
+    Last dimension should be divisible number of child layers
+    Size of B_vector is equal to the number of child layers 
+
+    A : 0 1 2 3
+    B1: 0 1 
+    B2: 2 3
+    B3: 4 5 
+    B4: 6 7 
+    
+    Uses Allgather to perform slice layer functionality as AllGather has better implementation 
+    */
+    EL_DEBUG_CSE
+    Int m = A.Height();
+    Int n = A.Width();
+    Int mLocA = A.LocalHeight();
+    Int nLocA = A.LocalWidth();
+
+    mpi::Comm const& viewingCommA = A.Grid().ViewingComm();
+    mpi::Group owningGroupA = A.Grid().OwningGroup();
+
+    Int rowStrideA = A.RowStride();
+    
+    const Int numChildLayers = int(B_Vector.size());
+    const Int sizeA = A.Grid().VCSize();
+
+    
+
+    
+    if(m%splitDim != 0)
+    {
+        LogicError("TranslateBetweenGridsSliceGatherParentSmall: ",
+                   "feature dimension should be divisible by split dimension");
+    }
+    if(splitDim%numChildLayers!=0)
+    {
+        LogicError("TranslateBetweenGridsSliceGatherParentSmall: ",
+                   "Split dimension must be divisible by number of children layers or number of splits");
+    }
+
+    SyncInfo<D1> syncGeneralMetaData = SyncInfo<D1>();
+    const bool inAGrid = A.Participating();
+    
+    Int recvMetaData[6];
+
+    Int metaData[6];
+    if(inAGrid)
+    {
+        
+        metaData[0] = m;
+        metaData[1] = n;
+        metaData[2] = mLocA;
+        metaData[3] = nLocA;     
+    }
+    else
+    {
+        metaData[0] = 0;
+        metaData[1] = 0;
+        metaData[2] = 0;
+        metaData[3] = 0;
+    }
+
+    
+    
+    const std::vector<Int> sendMetaData (metaData,metaData + 4 );
+
+    
+    SyncInfo<D1> syncInfoA = SyncInfoFromMatrix(A.LockedMatrix());
+    Synchronize(syncGeneral);
+    
+
+    mpi::AllReduce( sendMetaData.data(), recvMetaData, 4, mpi::MAX, viewingCommA,syncGeneralMetaData);
+    Synchronize(syncGeneralMetaData);
+
+    m = recvMetaData[0];
+    n = recvMetaData[1];
+    mLocA = recvMetaData[2];
+    nLocA = recvMetaData[3];
+
+
+    for(Int i=0; i<numChildLayers;++i)
+    {
+        B_Vector[i]->Resize(int(m/numChildLayers),n);
+    }
+
+    const Int gatherCommSize = mpi::Size( gatherComm );
+    //number of relevant ranks from which data should be received  
+    
+    const int numMatricesInSubGrid  = int(numChildLayers / gatherCommSize);
+
+    std::vector<Int> indexBVec;
+    std::vector<SyncInfo<D2>> syncInfoBVector;
+
+    for(Int i = 0; i<numChildLayers; ++i)
+    {
+        if(B_Vector[i]->Participating())
+        {
+            indexBVec.push_back(i);
+            syncInfoBVector.push_back(SyncInfoFromMatrix(dynamic_cast<DistMatrix<T,STAR,VC,ELEMENT,D2>*>( &(*B_Vector[i]))->LockedMatrix()) );
+
+        }
+    }
+    const Int indexB = indexBVec[0];
+    DistMatrix<T,STAR,VC,ELEMENT,D2>* B = dynamic_cast<DistMatrix<T,STAR,VC,ELEMENT,D2>*>( &(*B_Vector[indexB]));
+    Matrix<T,D2>  transposedMatrix(int((mLocA*nLocA)/splitDim),splitDim), recvTransposedMatrix(int((mLocA*nLocA)/splitDim),int(splitDim/gatherCommSize)), sendTransposedMatrix(nLocA,mLocA);
+
+
+    const Int maxSendSize = mLocA*nLocA;
+    const Int maxRecvSize = int(mLocA*nLocA*gatherCommSize);
+
+    simple_buffer<T,D2> recv_buf(maxRecvSize, syncGeneral);
+
+
+
+    T* recvBuf = recv_buf.data();
+
+
+
+    if(inAGrid)
+    {
+        Transpose(A.LockedMatrix(),sendTransposedMatrix);
+    }
+
+    
+
+    const Int rowStrideB = B->RowStride();
+
+    const Int sizeB = B->Grid().VCSize();
+    const Int numRanksToRecv = sizeA / sizeB;
+
+
+    const Int rowGCD = GCD(rowStrideB, rowStrideA);
+    const Int rowLCM = rowStrideB*rowStrideA / rowGCD;
+
+    // const Int posInGrid = A.Grid().VCRank();
+    // const Int subgridNumber = int(std::floor(posInGrid/sizeB));
+    const Int subgridNumber = El::mpi::Rank(gatherComm);
+
+
+    if(sizeA%sizeB!= 0)
+    {
+        LogicError("TranslateBetweenGridsSliceGatherParentSmall: ",
+                   "Number of processes in A grid should be divided by subgrid size");
+    }
+
+
+
+    // Parent Subgrid Size: 4 Child Subgrid Size: 3
+    // Parent 0 1 2 3 0 1 2 3 0 1 2 3 
+    // Child  0 1 2 0 1 2 0 1 2 0 1 2
+
+
+    int partialHeight = int(splitDim/ gatherCommSize);
+    const Int localSubgridHeight = int(splitDim/ gatherCommSize);
+    const Int recvLocalHeight =  (mLocA/splitDim) * (localSubgridHeight/numMatricesInSubGrid);
+
+    const Int perSubgridSplitHeight = splitDim / gatherCommSize;
+    const Int childLayerSplitHeight = perSubgridSplitHeight / numMatricesInSubGrid;
+
+    std::vector<Matrix<T,D2>> conversionMatrixVector;
+    for(Int childLayerSubGrid = 0; childLayerSubGrid < numMatricesInSubGrid; ++childLayerSubGrid)
+    {
+        conversionMatrixVector.push_back(Matrix<T,D2>(childLayerSplitHeight * nLocA * (mLocA/splitDim), numRanksToRecv));
+    }
+
+
+    mpi::AllGather(sendTransposedMatrix.Buffer(), mLocA*nLocA, 
+                    recvBuf, mLocA*nLocA, 
+                    gatherComm, syncGeneral);
+
+    Matrix<T,D2>  tempMatrix(numRanksToRecv , childLayerSplitHeight * nLocA * (mLocA/splitDim));
+
+    for(Int childLayerSubGrid = 0; childLayerSubGrid < numMatricesInSubGrid; ++childLayerSubGrid)
+    {
+        const Int colNumberChildLayer = childLayerSubGrid + (numMatricesInSubGrid * subgridNumber);
+
+        //strieded copy to get appropriate rows (scattering the data among child layers)
+        copy::util::InterleaveMatrix(
+            childLayerSplitHeight * nLocA, (mLocA/splitDim)*numRanksToRecv,
+            recvBuf + colNumberChildLayer * childLayerSplitHeight * nLocA  , 1, childLayerSplitHeight * nLocA * numChildLayers,
+            conversionMatrixVector[childLayerSubGrid].Buffer(),
+            1, childLayerSplitHeight * nLocA,
+            syncGeneral);
+
+
+        Transpose(conversionMatrixVector[childLayerSubGrid], tempMatrix);
+
+        tempMatrix.Resize(nLocA * numRanksToRecv , childLayerSplitHeight * (mLocA/splitDim));
+
+        Transpose(tempMatrix,dynamic_cast<DistMatrix<T,STAR,VC,ELEMENT,D2>*>( &(*B_Vector[indexBVec[childLayerSubGrid]]))->Matrix());
+
+
+    }
+
+}
+
+template<typename T, Device D1, Device D2>
+void TranslateBetweenGridsScatterCommSameSizeSubGrids
+(DistMatrix<T,STAR,VC,ELEMENT,D1> const& A,
+  std::vector<std::unique_ptr<AbstractDistMatrix<T>>>& B_Vector, int splitDim,  mpi::Comm const& ScatterComm, SyncInfo<D1> & syncGeneral)
+{
+    /*
+    Scatter data in Column-Major ordering along the last dimension 
+    Last dimension should be divisible number of child layers
+    Size of B_vector is equal to the number of child layers 
+
+    Subgrids in B_vector are assumed to be subset of resources in A grid 
+
+    Parent Grid: 1 2 3 4 (must match the ranks of subgrid1) 
+    Subgrid1:  1  2  3  4 
+    Subgrid2:  5  6  7  8 
+    Subgrid3:  9 10 11 12 
+    Subgrid4: 13 14 15 16 
+    */
+    EL_DEBUG_CSE
+    Int m = A.Height();
+    Int n = A.Width();
+    Int mLocA = A.LocalHeight();
+    Int nLocA = A.LocalWidth();
+
+    mpi::Comm const& viewingCommA = A.Grid().ViewingComm();
+    mpi::Group owningGroupA = A.Grid().OwningGroup();
+
+
+    Int rowStrideA = A.RowStride();
+
+
+    const Int numChildLayers = int(B_Vector.size());
+
+
+
+    SyncInfo<D1> syncGeneralMetaData = SyncInfo<D1>();
+    const bool inAGrid = A.Participating();
+    
+
+    Int recvMetaData[6];
+
+    Int metaData[6];
+    if(inAGrid)
+    {
+        
+        metaData[0] = m;
+        metaData[1] = n;
+        metaData[2] = mLocA;
+        metaData[3] = nLocA;     
+    }
+    else
+    {
+        metaData[0] = 0;
+        metaData[1] = 0;
+        metaData[2] = 0;
+        metaData[3] = 0;
+    }
+    
+    const std::vector<Int> sendMetaData (metaData,metaData + 4 );
+
+    
+    SyncInfo<D1> syncInfoA = SyncInfoFromMatrix(A.LockedMatrix());
+    Synchronize(syncGeneral);
+    
+
+    mpi::AllReduce( sendMetaData.data(), recvMetaData, 4, mpi::MAX, viewingCommA,syncGeneralMetaData);
+    Synchronize(syncGeneralMetaData);
+
+    m = recvMetaData[0];
+    n = recvMetaData[1];
+    mLocA = recvMetaData[2];
+    nLocA = recvMetaData[3];
+
+
+
+    for(Int i=0; i<numChildLayers;++i)
+    {
+        B_Vector[i]->Resize(int(m/numChildLayers),n);
+    }
+
+
+    if( (inAGrid ==true && B_Vector[0]->Participating()==false) || 
+        (inAGrid ==false && B_Vector[0]->Participating()==true) )
+    {
+        //A gird should have same ranks as of subgrid1 
+        LogicError("TranslateBetweenGridsScatteSameSizeSubGrids: ",
+                   "Owning ranks in Grid A should be same as of Owning Ranks in Subgrid 1");
+
+    }
+    
+    if(m%splitDim != 0)
+    {
+        LogicError("TranslateBetweenGridsScatteSameSizeSubGrids: ",
+                   "feature dimension should be divisible by split dimension");
+    }
+    if(splitDim%numChildLayers!=0)
+    {
+        LogicError("TranslateBetweenGridsScatteSameSizeSubGrids: ",
+                   "Split dimension must be divisible by number of children layers or number of splits");
+    }
+
+
+    const Int scatterCommSize = mpi::Size( ScatterComm );
+    const int sendCounts = int((mLocA*nLocA)/scatterCommSize);
+    const int numMatricesInSubGrid  = int(numChildLayers / scatterCommSize);
+
+    std::vector<Int> indexBVec;
+
+    for(Int i = 0; i<numChildLayers; ++i)
+    {
+        if(B_Vector[i]->Participating())
+        {
+            indexBVec.push_back(i);
+
+        }
+    }
+    const Int indexB = indexBVec[0];
+    DistMatrix<T,STAR,VC,ELEMENT,D2>* B = dynamic_cast<DistMatrix<T,STAR,VC,ELEMENT,D2>*>( &(*B_Vector[indexB]));
+    Matrix<T,D2> conversionMatrix(mLocA,nLocA), transposedMatrix(int((mLocA*nLocA)/splitDim),splitDim), tempMatrix((mLocA/splitDim) * nLocA, splitDim/numChildLayers);
+
+
+    simple_buffer<T,D2> recv_buf(sendCounts, syncGeneral);
+    T* recvBuf = recv_buf.data();
+
+
+    if(inAGrid)
+    {
+        Copy(A.LockedMatrix(), conversionMatrix);
+
+        conversionMatrix.Resize(splitDim, int((mLocA*nLocA)/splitDim));
+
+        Transpose(conversionMatrix,transposedMatrix);
+
+        
+
+    }
+
+
+
+
+    conversionMatrix.Resize((mLocA/splitDim) * nLocA, splitDim/numChildLayers);
+
+
+       
+    mpi::Scatter(   (T *)transposedMatrix.Buffer(), sendCounts, 
+                    recvBuf, sendCounts, 
+                    0, ScatterComm,
+                    syncGeneral);
+
+    Synchronize(syncGeneral);
+    int perChildLayerSize = (mLocA/splitDim) * nLocA * (splitDim/numChildLayers);
+
+    for(Int childLayerSubGrid = 0; childLayerSubGrid < numMatricesInSubGrid; ++childLayerSubGrid)
+    {
+
+
+        copy::util::InterleaveMatrix(
+            (mLocA/splitDim) * nLocA, splitDim/numChildLayers,
+            recvBuf + perChildLayerSize *childLayerSubGrid , 1, (mLocA/splitDim) * nLocA,
+            conversionMatrix.Buffer(),
+            1, (mLocA/splitDim) * nLocA,
+            syncGeneral);
+
+
+
+        Transpose(conversionMatrix, tempMatrix);
+
+
+        tempMatrix.Resize( mLocA / (numChildLayers) , nLocA);
+
+        copy::util::InterleaveMatrix(
+            mLocA / (numChildLayers), nLocA,
+            tempMatrix.Buffer() , 1, mLocA / (numChildLayers),
+            dynamic_cast<DistMatrix<T,STAR,VC,ELEMENT,D2>*>( &(*B_Vector[indexBVec[childLayerSubGrid]]))->Buffer(),
+            1, mLocA / (numChildLayers),
+            syncGeneral);
+    }
+}
+
+
+template<typename T, Device D1, Device D2>
+void TranslateBetweenGridsSliceBroadcastCommSameSizeSubGrids
+(DistMatrix<T,STAR,VC,ELEMENT,D1> const& A,
+  std::vector<std::unique_ptr<AbstractDistMatrix<T>>>& B_Vector, int splitDim,  mpi::Comm const& ScatterComm, SyncInfo<D1> & syncGeneral)
+{
+    /*
+    Scatter data in Column-Major ordering along the last dimension 
+    Last dimension should be divisible number of child layers
+    Size of B_vector is equal to the number of child layers 
+
+    Subgrids in B_vector are assumed to be subset of resources in A grid 
+
+    Parent Grid: 1 2 3 4 (must match the ranks of subgrid1) 
+    Subgrid1:  1  2  3  4 
+    Subgrid2:  5  6  7  8 
+    Subgrid3:  9 10 11 12 
+    Subgrid4: 13 14 15 16 
+    */
+    EL_DEBUG_CSE
+    Int m = A.Height();
+    Int n = A.Width();
+    Int mLocA = A.LocalHeight();
+    Int nLocA = A.LocalWidth();
+
+    mpi::Comm const& viewingCommA = A.Grid().ViewingComm();
+    mpi::Group owningGroupA = A.Grid().OwningGroup();
+
+
+    Int rowStrideA = A.RowStride();
+
+
+    const Int numChildLayers = int(B_Vector.size());
+    const Int sizeA = A.Grid().VCSize();
+
+
+    SyncInfo<D1> syncGeneralMetaData = SyncInfo<D1>();
+    const bool inAGrid = A.Participating();
+    
+
+    Int recvMetaData[6];
+
+    Int metaData[6];
+    if(inAGrid)
+    {
+        
+        metaData[0] = m;
+        metaData[1] = n;
+        metaData[2] = mLocA;
+        metaData[3] = nLocA;     
+    }
+    else
+    {
+        metaData[0] = 0;
+        metaData[1] = 0;
+        metaData[2] = 0;
+        metaData[3] = 0;
+    }
+    
+    const std::vector<Int> sendMetaData (metaData,metaData + 4 );
+
+    
+    SyncInfo<D1> syncInfoA = SyncInfoFromMatrix(A.LockedMatrix());
+    Synchronize(syncGeneral);
+    
+
+    mpi::AllReduce( sendMetaData.data(), recvMetaData, 4, mpi::MAX, viewingCommA,syncGeneralMetaData);
+    Synchronize(syncGeneralMetaData);
+
+    m = recvMetaData[0];
+    n = recvMetaData[1];
+    mLocA = recvMetaData[2];
+    nLocA = recvMetaData[3];
+
+
+
+    for(Int i=0; i<numChildLayers;++i)
+    {
+        B_Vector[i]->Resize(int(m/numChildLayers),n);
+    }
+
+
+    if( (inAGrid ==true && B_Vector[0]->Participating()==false) || 
+        (inAGrid ==false && B_Vector[0]->Participating()==true) )
+    {
+        //A gird should have same ranks as of subgrid1 
+        LogicError("TranslateBetweenGridsScatteSameSizeSubGrids: ",
+                   "Owning ranks in Grid A should be same as of Owning Ranks in Subgrid 1");
+
+    }
+    
+    if(m%splitDim != 0)
+    {
+        LogicError("TranslateBetweenGridsScatteSameSizeSubGrids: ",
+                   "feature dimension should be divisible by split dimension");
+    }
+    if(splitDim%numChildLayers!=0)
+    {
+        LogicError("TranslateBetweenGridsScatteSameSizeSubGrids: ",
+                   "Split dimension must be divisible by number of children layers or number of splits");
+    }
+
+
+    const Int scatterCommSize = mpi::Size( ScatterComm );
+    const int sendCounts = mLocA*nLocA;
+    const int numMatricesInSubGrid  = int(numChildLayers / scatterCommSize);
+
+    std::vector<Int> indexBVec;
+
+    for(Int i = 0; i<numChildLayers; ++i)
+    {
+        if(B_Vector[i]->Participating())
+        {
+            indexBVec.push_back(i);
+
+        }
+    }
+    const Int indexB = indexBVec[0];
+    DistMatrix<T,STAR,VC,ELEMENT,D2>* B = dynamic_cast<DistMatrix<T,STAR,VC,ELEMENT,D2>*>( &(*B_Vector[indexB]));
+    Matrix<T,D2> conversionMatrix(mLocA,nLocA), transposedMatrix(int((mLocA*nLocA)/splitDim),splitDim), tempMatrix((mLocA/splitDim) * nLocA, splitDim/numChildLayers);
+
+
+    simple_buffer<T,D2> recv_buf(sendCounts, syncGeneral);
+    T* recvBuf = recv_buf.data();
+
+
+    if(inAGrid)
+    {
+        Copy(A.LockedMatrix(), conversionMatrix);
+
+        conversionMatrix.Resize(splitDim, int((mLocA*nLocA)/splitDim));
+
+        Transpose(conversionMatrix,transposedMatrix);
+
+        
+
+    }
+
+    
+    const Int rowStrideB = B->RowStride();
+    const Int sizeB = B->Grid().VCSize();
+    const Int posInGrid = A.Grid().VCRank();
+    const Int posInScatter = mpi::Rank(ScatterComm);
+
+
+
+    conversionMatrix.Resize((mLocA/splitDim) * nLocA, splitDim/numChildLayers);
+
+
+
+
+
+    mpi::Broadcast((T *)transposedMatrix.Buffer(), sendCounts, 0, ScatterComm,
+               syncGeneral);
+
+       
+    
+
+    Synchronize(syncGeneral);
+    int perChildLayerSize = (mLocA/splitDim) * nLocA * (splitDim/numChildLayers);
+
+
+
+    for(Int childLayerSubGrid = 0; childLayerSubGrid < numMatricesInSubGrid; ++childLayerSubGrid)
+    {
+        int bufferOffset = (perChildLayerSize *childLayerSubGrid) + (numMatricesInSubGrid * posInScatter * perChildLayerSize );
+
+
+        copy::util::InterleaveMatrix(
+            (mLocA/splitDim) * nLocA, splitDim/numChildLayers,
+            transposedMatrix.Buffer() + bufferOffset, 1, (mLocA/splitDim) * nLocA,
+            conversionMatrix.Buffer(),
+            1, (mLocA/splitDim) * nLocA,
+            syncGeneral);
+
+
+
+        Transpose(conversionMatrix, tempMatrix);
+
+
+        tempMatrix.Resize( mLocA / (numChildLayers) , nLocA);
+
+        copy::util::InterleaveMatrix(
+            mLocA / (numChildLayers), nLocA,
+            tempMatrix.Buffer() , 1, mLocA / (numChildLayers),
+            dynamic_cast<DistMatrix<T,STAR,VC,ELEMENT,D2>*>( &(*B_Vector[indexBVec[childLayerSubGrid]]))->Buffer(),
+            1, mLocA / (numChildLayers),
+            syncGeneral);
+    }
+
+
+
+
+
+    
+
+}
+
 template<typename T, Device D1, Device D2>
 void TranslateBetweenGridsScatter
 (DistMatrix<T,STAR,VC,ELEMENT,D1> const& A,
@@ -1118,38 +1896,101 @@ void TranslateBetweenGridsScatter
     //Some better logic can be written here 
     // 0: Best Algo
     // 1: Basic Scatter
-    // 2: Scater with Opt (interleave for transpose)
-    // 3: Gather 
+    // 2: Broadcast
+    // 
 
+    DistMatrix<T,STAR,VC,ELEMENT,D2>* B = dynamic_cast<DistMatrix<T,STAR,VC,ELEMENT,D2>*>( &(*B_Vector[0]));
+    
+    const Int sizeA = A.Grid().VCSize();
+    const Int sizeB = B->Grid().VCSize();
+    const Int commSize = El::mpi::Size(ScatterComm);
 
-    if(version==0 || version == 3)
+    if(sizeA == sizeB)
     {
-        TranslateBetweenGridsSliceGatherOptComm<T, D1, D2>(A,
+        //SubGrid VCSizc is equal to Parent Grid 
+        if(version==0 || version == 3)
+        {
+            TranslateBetweenGridsScatterCommSameSizeSubGrids<T, D1, D2>(A,
+                                                    B_Vector, 
+                                                    splitDim, 
+                                                    ScatterComm,
+                                                    syncGeneral);
+        }
+        else if (version == 2 || version == 1 )
+        {
+            TranslateBetweenGridsSliceBroadcastCommSameSizeSubGrids<T, D1, D2>(A,
                                                 B_Vector, 
                                                 splitDim, 
                                                 ScatterComm,
                                                 syncGeneral);
+        }
+        else
+        {
+            LogicError("TranslateBetweenGridsScatter: ",
+                       "Invalid version, it has to be [0,1,2,3], 0: Default");
+        }
     }
-    else if (version == 2)
+
+    else if (commSize > sizeA/sizeB)
     {
-        TranslateBetweenGridsScatterOptComm<T, D1, D2>(A,
-                                            B_Vector, 
-                                            splitDim, 
-                                            ScatterComm,
-                                            syncGeneral);
+
+        if(version==0 || version == 3)
+        {
+            TranslateBetweenGridsScatterCommParentSmall<T, D1, D2>(A,
+                                                    B_Vector, 
+                                                    splitDim, 
+                                                    ScatterComm,
+                                                    syncGeneral);
+        }
+        else if (version == 2 || version == 1 )
+        {
+            TranslateBetweenGridsSliceGatherParentSmall<T, D1, D2>(A,
+                                                B_Vector, 
+                                                splitDim, 
+                                                ScatterComm,
+                                                syncGeneral);
+        }
+        else
+        {
+            LogicError("TranslateBetweenGridsScatter: ",
+                       "Invalid version, it has to be [0,1,2,3], 0: Default");
+        }
     }
-    else if(version == 1)
-    {
-        TranslateBetweenGridsScatterOptComm<T, D1, D2>(A,
-                                            B_Vector, 
-                                            splitDim, 
-                                            ScatterComm,
-                                            syncGeneral);
-    }
+    // 0: Best Algo
+    // 1: Basic Scatter
+    // 2: Scater with Opt (interleave for transpose)
+    // 3: Gather 
     else
     {
-        LogicError("TranslateBetweenGridsScatter: ",
-                   "Invalid version, it has to be [0,1,2,3], 0: Default");
+        if(version==0 || version == 3)
+        {
+            TranslateBetweenGridsSliceGatherOptComm<T, D1, D2>(A,
+                                                    B_Vector, 
+                                                    splitDim, 
+                                                    ScatterComm,
+                                                    syncGeneral);
+        }
+        else if (version == 2)
+        {
+            TranslateBetweenGridsScatterOptComm<T, D1, D2>(A,
+                                                B_Vector, 
+                                                splitDim, 
+                                                ScatterComm,
+                                                syncGeneral);
+        }
+        else if(version == 1)
+        {
+            TranslateBetweenGridsScatterOptComm<T, D1, D2>(A,
+                                                B_Vector, 
+                                                splitDim, 
+                                                ScatterComm,
+                                                syncGeneral);
+        }
+        else
+        {
+            LogicError("TranslateBetweenGridsScatter: ",
+                       "Invalid version, it has to be [0,1,2,3], 0: Default");
+        }
     }
  
 }
@@ -1281,6 +2122,14 @@ void TranslateBetweenGridsGatherComm
     Subgrids in B_vector are assumed to be subset of resources in A grid 
 
     Resources are assumed to be distribted equally among different subgrids 
+
+    or 
+
+    A : 0 1 2 3
+    B1: 0 1 
+    B2: 2 3
+    B3: 4 5 
+    B4: 6 7 
     
 
     */
@@ -1308,6 +2157,7 @@ void TranslateBetweenGridsGatherComm
     const Int mLocB = B->LocalHeight();
     const Int nLocB = B->LocalWidth();
     const Int posInGrid = A.Grid().VCRank();
+    const bool inAGrid = A.Participating();
 
 
 
@@ -1371,17 +2221,20 @@ void TranslateBetweenGridsGatherComm
                     gatherComm, syncGeneral);
 
 
+    if(inAGrid)
+    {
+        Matrix<T,D1> resizedRecvMatrix(m*numParentLayers,int(n/sizeB));
 
-    Matrix<T,D1> resizedRecvMatrix(m*numParentLayers,int(n/sizeB));
+        Transpose(recvTransposedMatrix, resizedRecvMatrix);
 
-    Transpose(recvTransposedMatrix, resizedRecvMatrix);
-
-    copy::util::InterleaveMatrix(
-                        m*numParentLayers, int(n/sizeA),
-                        resizedRecvMatrix.Buffer() + index_from *m*numParentLayers , 1, m*numParentLayers*(sizeA/sizeB),
-                        A.Buffer(0,0),
-                        1, m*numParentLayers,
-                        syncInfoA);
+        copy::util::InterleaveMatrix(
+                            m*numParentLayers, int(n/sizeA),
+                            resizedRecvMatrix.Buffer() + index_from *m*numParentLayers , 1, m*numParentLayers*(sizeA/sizeB),
+                            A.Buffer(0,0),
+                            1, m*numParentLayers,
+                            syncInfoA);
+    }
+    
 
 
 
@@ -1511,39 +2364,359 @@ void TranslateBetweenGridsGatherOptComm
 }
 
 
+
+template<typename T, Device D1, Device D2>
+void TranslateBetweenGridsGatherCommSameSizeSubGrids
+(DistMatrix<T,STAR,VC,ELEMENT,D1> & A,
+  std::vector<std::unique_ptr<AbstractDistMatrix<T>>>& B_Vector, int splitDim,  mpi::Comm const& gatherComm, SyncInfo<D1> & syncGeneral)
+{
+    /*
+    Gather data in Column-Major ordering along the last dimension 
+    
+    Size of B_vector is equal to the number of parent layers 
+    
+    Parent Grid: 1 2 3 4 (must match the ranks of subgrid1) 
+    Subgrid1:  1  2  3  4 
+    Subgrid2:  5  6  7  8 
+    Subgrid3:  9 10 11 12 
+    Subgrid4: 13 14 15 16 
+    
+    
+
+    */
+    EL_DEBUG_CSE
+
+    std::vector<Int> indexBVec;
+    const Int numParentLayers = int(B_Vector.size());
+
+    for(Int i = 0; i<numParentLayers; ++i)
+    {
+        if(B_Vector[i]->Participating())
+        {
+            indexBVec.push_back(i);
+
+        }
+    }
+    const Int indexB = indexBVec[0];
+
+    DistMatrix<T,STAR,VC,ELEMENT,D2>* B = dynamic_cast<DistMatrix<T,STAR,VC,ELEMENT,D2>*>( &(*B_Vector[indexB]));
+
+    const Int sizeB = B->Grid().VCSize();
+
+    const Int m = B->Height();
+    const Int n = B->Width();
+    const Int mLocB = B->LocalHeight();
+    const Int nLocB = B->LocalWidth();
+    const Int posInGrid = A.Grid().VCRank();
+    const bool inAGrid = A.Participating();
+
+
+
+    
+    const Int sizeA = A.Grid().VCSize();
+
+     const Int index_from = int(std::floor(posInGrid/sizeB));
+
+    A.Resize(m*numParentLayers,n); 
+
+    SyncInfo<D1> syncInfoA = SyncInfoFromMatrix(A.LockedMatrix());
+
+    const Int gatherCommSize = mpi::Size( gatherComm );
+    const int numMatricesInSubGrid  = int(numParentLayers / gatherCommSize);
+
+
+    if( (inAGrid ==true && B_Vector[0]->Participating()==false) || 
+        (inAGrid ==false && B_Vector[0]->Participating()==true) )
+    {
+        //A gird should have same ranks as of subgrid1 
+        LogicError("TranslateBetweenGridsGatherCommSameSizeSubGrids: ",
+                   "Owning ranks in Grid A/Parent Grid should be same as of Owning Ranks in Subgrid 1");
+
+    }
+
+    //mlocB and m should be equal
+    if(mLocB!=m)
+    {
+        LogicError("TranslateBetweenGridsGatherCommSameSizeSubGrids: ",
+                   "mLocB and m should be same");
+
+    }
+    if(n%sizeA!=0)
+    {
+        LogicError("TranslateBetweenGridsGatherCommSameSizeSubGrids: ",
+                   "Width must be divisible by number of resources in A matrix");
+    }
+    if(mLocB%splitDim!=0)
+    {
+        LogicError("TranslateBetweenGridsGatherCommSameSizeSubGrids: ",
+                   "Height in B matrix must be divisible by splitDim");
+
+    }
+    const int totalSizeComm = mLocB * numParentLayers * int(n/sizeB);
+    
+    const int maxSendSize = mLocB*nLocB * numMatricesInSubGrid;
+
+    simple_buffer<T,D2> send_buf(maxSendSize, syncInfoA);  
+    T* sendBuf = send_buf.data();
+
+
+    Matrix<T,D1> conversionMatrix(mLocB,nLocB), transposedMatrix(int((mLocB*nLocB)/splitDim),splitDim), recvTransposedMatrix(int(totalSizeComm/(splitDim*numParentLayers)),splitDim*numParentLayers);
+
+    for(Int parentLayerSubGrid = 0; parentLayerSubGrid < numMatricesInSubGrid; ++parentLayerSubGrid)
+    {
+        Copy(dynamic_cast<DistMatrix<T,STAR,VC,ELEMENT,D2>*>( &(*B_Vector[indexBVec[parentLayerSubGrid]]))->LockedMatrix(), conversionMatrix);
+        conversionMatrix.Resize(splitDim, int((mLocB*nLocB)/splitDim));
+        Transpose(conversionMatrix,transposedMatrix);
+        copy::util::InterleaveMatrix(
+            int((mLocB*nLocB)/splitDim),splitDim,
+            transposedMatrix.Buffer()  , 1, int((mLocB*nLocB)/splitDim),
+            sendBuf + parentLayerSubGrid*mLocB*nLocB,
+            1, int((mLocB*nLocB)/splitDim),
+            syncGeneral);
+
+    }
+
+    mpi::Gather(sendBuf, mLocB*nLocB*numMatricesInSubGrid, 
+                    recvTransposedMatrix.Buffer(), mLocB*nLocB*numMatricesInSubGrid, 
+                    0, gatherComm, syncGeneral);
+
+
+    if(inAGrid)
+    {
+        Matrix<T,D1> resizedRecvMatrix(m*numParentLayers,int(n/sizeB));
+
+        Transpose(recvTransposedMatrix, resizedRecvMatrix);
+
+        copy::util::InterleaveMatrix(
+                            m*numParentLayers, int(n/sizeB),
+                            resizedRecvMatrix.Buffer()  , 1, m*numParentLayers,
+                            A.Buffer(0,0),
+                            1, m*numParentLayers,
+                            syncInfoA);
+    }
+}
+
+
+
+
+
+template<typename T, Device D1, Device D2>
+void TranslateBetweenGridsAllGatherCommSameSizeSubGrids
+(DistMatrix<T,STAR,VC,ELEMENT,D1> & A,
+  std::vector<std::unique_ptr<AbstractDistMatrix<T>>>& B_Vector, int splitDim,  mpi::Comm const& gatherComm, SyncInfo<D1> & syncGeneral)
+{
+    /*
+    Gather data in Column-Major ordering along the last dimension 
+    
+    Size of B_vector is equal to the number of parent layers 
+    
+    Parent Grid: 1 2 3 4 (must match the ranks of subgrid1) 
+    Subgrid1:  1  2  3  4 
+    Subgrid2:  5  6  7  8 
+    Subgrid3:  9 10 11 12 
+    Subgrid4: 13 14 15 16 
+    
+    
+
+    */
+    EL_DEBUG_CSE
+
+    std::vector<Int> indexBVec;
+    const Int numParentLayers = int(B_Vector.size());
+
+    for(Int i = 0; i<numParentLayers; ++i)
+    {
+        if(B_Vector[i]->Participating())
+        {
+            indexBVec.push_back(i);
+
+        }
+    }
+    const Int indexB = indexBVec[0];
+
+    DistMatrix<T,STAR,VC,ELEMENT,D2>* B = dynamic_cast<DistMatrix<T,STAR,VC,ELEMENT,D2>*>( &(*B_Vector[indexB]));
+
+    const Int sizeB = B->Grid().VCSize();
+
+    const Int m = B->Height();
+    const Int n = B->Width();
+    const Int mLocB = B->LocalHeight();
+    const Int nLocB = B->LocalWidth();
+    const Int posInGrid = A.Grid().VCRank();
+    const bool inAGrid = A.Participating();
+
+
+
+    
+    const Int sizeA = A.Grid().VCSize();
+
+     const Int index_from = int(std::floor(posInGrid/sizeB));
+
+    A.Resize(m*numParentLayers,n); 
+
+    SyncInfo<D1> syncInfoA = SyncInfoFromMatrix(A.LockedMatrix());
+
+    const Int gatherCommSize = mpi::Size( gatherComm );
+    const int numMatricesInSubGrid  = int(numParentLayers / gatherCommSize);
+
+
+    if( (inAGrid ==true && B_Vector[0]->Participating()==false) || 
+        (inAGrid ==false && B_Vector[0]->Participating()==true) )
+    {
+        //A gird should have same ranks as of subgrid1 
+        LogicError("TranslateBetweenGridsAllGatherCommSameSizeSubGrids: ",
+                   "Owning ranks in Grid A/Parent Grid should be same as of Owning Ranks in Subgrid 1");
+
+    }
+
+    //mlocB and m should be equal
+    if(mLocB!=m)
+    {
+        LogicError("TranslateBetweenGridsAllGatherCommSameSizeSubGrids: ",
+                   "mLocB and m should be same");
+
+    }
+    if(n%sizeA!=0)
+    {
+        LogicError("TranslateBetweenGridsAllGatherCommSameSizeSubGrids: ",
+                   "Width must be divisible by number of resources in A matrix");
+    }
+    if(mLocB%splitDim!=0)
+    {
+        LogicError("TranslateBetweenGridsAllGatherCommSameSizeSubGrids: ",
+                   "Height in B matrix must be divisible by splitDim");
+
+    }
+    const int totalSizeComm = mLocB * numParentLayers * int(n/sizeB);
+    
+    const int maxSendSize = mLocB*nLocB * numMatricesInSubGrid;
+
+    simple_buffer<T,D2> send_buf(maxSendSize, syncInfoA);  
+    T* sendBuf = send_buf.data();
+
+
+    Matrix<T,D1> conversionMatrix(mLocB,nLocB), transposedMatrix(int((mLocB*nLocB)/splitDim),splitDim), recvTransposedMatrix(int(totalSizeComm/(splitDim*numParentLayers)),splitDim*numParentLayers);
+
+    for(Int parentLayerSubGrid = 0; parentLayerSubGrid < numMatricesInSubGrid; ++parentLayerSubGrid)
+    {
+        Copy(dynamic_cast<DistMatrix<T,STAR,VC,ELEMENT,D2>*>( &(*B_Vector[indexBVec[parentLayerSubGrid]]))->LockedMatrix(), conversionMatrix);
+        conversionMatrix.Resize(splitDim, int((mLocB*nLocB)/splitDim));
+        Transpose(conversionMatrix,transposedMatrix);
+        copy::util::InterleaveMatrix(
+            int((mLocB*nLocB)/splitDim),splitDim,
+            transposedMatrix.Buffer()  , 1, int((mLocB*nLocB)/splitDim),
+            sendBuf + parentLayerSubGrid*mLocB*nLocB,
+            1, int((mLocB*nLocB)/splitDim),
+            syncGeneral);
+
+    }
+
+    mpi::AllGather(sendBuf, mLocB*nLocB*numMatricesInSubGrid, 
+                    recvTransposedMatrix.Buffer(), mLocB*nLocB*numMatricesInSubGrid, 
+                    gatherComm, syncGeneral);
+
+
+    if(inAGrid)
+    {
+        Matrix<T,D1> resizedRecvMatrix(m*numParentLayers,int(n/sizeB));
+
+        Transpose(recvTransposedMatrix, resizedRecvMatrix);
+
+        copy::util::InterleaveMatrix(
+                            m*numParentLayers, int(n/sizeB),
+                            resizedRecvMatrix.Buffer()  , 1, m*numParentLayers,
+                            A.Buffer(0,0),
+                            1, m*numParentLayers,
+                            syncInfoA);
+    }
+
+    
+
+
+
+}
+
+
 template<typename T, Device D1, Device D2>
 void TranslateBetweenGridsGather
 (DistMatrix<T,STAR,VC,ELEMENT,D1> & A,
   std::vector<std::unique_ptr<AbstractDistMatrix<T>>>& B_Vector, int splitDim,  mpi::Comm const& gatherComm, SyncInfo<D1> & syncGeneral, int version)
 {
     //Some better logic can be written here 
+
+    DistMatrix<T,STAR,VC,ELEMENT,D2>* B = dynamic_cast<DistMatrix<T,STAR,VC,ELEMENT,D2>*>( &(*B_Vector[0]));
+
+
     // 0: Best Algo
     // 1: Basic Gather 
-    // 2: Gather with Opt (interleave for transpose) (FIX IT)
-    //
+    // 2: AllGather implementation (NCCL does not have Gather)
 
-
-    if(version==0 || version == 1)
+    const Int sizeA = A.Grid().VCSize();
+    const Int sizeB = B->Grid().VCSize();
+    const Int commSize = El::mpi::Size(gatherComm);
+    if(sizeA == sizeB)
     {
-        TranslateBetweenGridsGatherComm<T, D1, D2>(A,
+        if(version==0 || version == 1)
+        {
+            TranslateBetweenGridsGatherCommSameSizeSubGrids<T, D1, D2>(A,
+                                                    B_Vector, 
+                                                    splitDim, 
+                                                    gatherComm,
+                                                    syncGeneral);
+        }
+        else if (version == 2)
+        {
+            TranslateBetweenGridsAllGatherCommSameSizeSubGrids<T, D1, D2>(A,
                                                 B_Vector, 
                                                 splitDim, 
                                                 gatherComm,
                                                 syncGeneral);
+        }
+        else
+        {
+            LogicError("TranslateBetweenGridsGather: ",
+                       "Invalid version, it has to be [0,1,2], 0: Default");
+        }
     }
-    else if (version == 2)
+    // 0: Best Algo
+    // 1: Basic Gather 
+    // 2: Gather with Opt (interleave for transpose) (FIX IT)
+    //
+    else if (commSize > sizeA/sizeB)
     {
-        TranslateBetweenGridsGatherOptComm<T, D1, D2>(A,
-                                            B_Vector, 
-                                            splitDim, 
-                                            gatherComm,
-                                            syncGeneral);
+       TranslateBetweenGridsGatherComm<T, D1, D2>(A,
+                                                    B_Vector, 
+                                                    splitDim, 
+                                                    gatherComm,
+                                                    syncGeneral); 
     }
     else
     {
-        LogicError("TranslateBetweenGridsGather: ",
-                   "Invalid version, it has to be [0,1,2], 0: Default");
+        if(version==0 || version == 1)
+        {
+            TranslateBetweenGridsGatherComm<T, D1, D2>(A,
+                                                    B_Vector, 
+                                                    splitDim, 
+                                                    gatherComm,
+                                                    syncGeneral);
+        }
+        else if (version == 2)
+        {
+            TranslateBetweenGridsGatherOptComm<T, D1, D2>(A,
+                                                B_Vector, 
+                                                splitDim, 
+                                                gatherComm,
+                                                syncGeneral);
+        }
+        else
+        {
+            LogicError("TranslateBetweenGridsGather: ",
+                       "Invalid version, it has to be [0,1,2], 0: Default");
+        }
     }
+
+
+    
  
 }
 
@@ -1563,10 +2736,10 @@ void TranslateBetweenGridsBroadcastOptComm
     
 
     EL_DEBUG_CSE
-    const Int m = A.Height();
-    const Int n = A.Width();
-    const Int mLocA = A.LocalHeight();
-    const Int nLocA = A.LocalWidth();
+    Int m = A.Height();
+    Int n = A.Width();
+    Int mLocA = A.LocalHeight();
+    Int nLocA = A.LocalWidth();
 
     mpi::Comm const& viewingCommA = A.Grid().ViewingComm();
     Int rowStrideA = A.RowStride();
@@ -1574,10 +2747,7 @@ void TranslateBetweenGridsBroadcastOptComm
     const Int numSubGrids = int(B_Vector.size());
     const Int sizeA = A.Grid().VCSize();
 
-    for(Int i=0; i<numSubGrids;++i)
-    {
-        B_Vector[i]->Resize(m,n);
-    }
+    
 
 
 
@@ -1607,6 +2777,53 @@ void TranslateBetweenGridsBroadcastOptComm
     const Int rowLCM = rowStrideB*rowStrideA / rowGCD;
     const Int posInGrid = A.Grid().VCRank();
 
+    SyncInfo<D1> syncGeneralMetaData = SyncInfo<D1>();
+    const bool inAGrid = A.Participating();
+    
+
+    Int recvMetaData[6];
+
+    Int metaData[6];
+    if(inAGrid)
+    {
+        
+        metaData[0] = m;
+        metaData[1] = n;
+        metaData[2] = mLocA;
+        metaData[3] = nLocA;     
+    }
+    else
+    {
+        metaData[0] = 0;
+        metaData[1] = 0;
+        metaData[2] = 0;
+        metaData[3] = 0;
+    }
+    
+    const std::vector<Int> sendMetaData (metaData,metaData + 4 );
+
+    
+    Synchronize(syncGeneral);
+
+    if(sizeA != sizeB*B_Vector.size())
+    {
+        mpi::AllReduce( sendMetaData.data(), recvMetaData, 4, mpi::MAX, viewingCommA,syncGeneralMetaData);
+        Synchronize(syncGeneralMetaData);
+
+        m = recvMetaData[0];
+        n = recvMetaData[1];
+        mLocA = recvMetaData[2];
+        nLocA = recvMetaData[3];
+    }
+
+    for(Int i=0; i<numSubGrids;++i)
+    {
+        B_Vector[i]->Resize(m,n);
+    }
+    
+
+    
+
 
     // Parent Subgrid Size: 4 Child Subgrid Size: 3
     // Parent 0 1 2 3 0 1 2 3 0 1 2 3 
@@ -1626,11 +2843,11 @@ void TranslateBetweenGridsBroadcastOptComm
     SyncInfo<D2> syncInfoB = SyncInfoFromMatrix(B->LockedMatrix());
 
 
-    const bool inAGrid = A.Participating();
+    // const bool inAGrid = A.Participating();
     const bool inBGrid = indexB >=0 ? true:false;
 
     const Int maxSendSize = mLocA * nLocA;
-    simple_buffer<T,D1> send_buf(inAGrid ? maxSendSize : 0, syncInfoA);
+    simple_buffer<T,D1> send_buf(maxSendSize , syncInfoA);
     simple_buffer<T,D2> recv_buf(inBGrid ? maxSendSize : 0, syncInfoB);
     T* sendBuf = send_buf.data();
 
@@ -1639,16 +2856,19 @@ void TranslateBetweenGridsBroadcastOptComm
 
     for(Int localDataRankA = 0; localDataRankA < int(rowLCM/sizeB); localDataRankA++)
     {
-
-        if(myLocalDataRankA==localDataRankA && inAGrid)
+        if(inAGrid)
         {
-            copy::util::InterleaveMatrix(
-                mLocA, nLocA,
-                A.LockedBuffer(0,0),
-                1, A.LDim(),
-                sendBuf, 1, mLocA, syncInfoA);
+           if(myLocalDataRankA==localDataRankA )
+            {
+                copy::util::InterleaveMatrix(
+                    mLocA, nLocA,
+                    A.LockedBuffer(0,0),
+                    1, A.LDim(),
+                    sendBuf, 1, mLocA, syncInfoA);
 
+            } 
         }
+        
         //comm is useless parameter in this function 
         //Aluminum infer comm from sunc object 
         Broadcast(sendBuf, mLocA*nLocA, localDataRankA, broadcastComm,
@@ -1688,10 +2908,11 @@ void TranslateBetweenGridsBroadcastBasic
     
 
     EL_DEBUG_CSE
-    const Int m = A.Height();
-    const Int n = A.Width();
-    const Int mLocA = A.LocalHeight();
-    const Int nLocA = A.LocalWidth();
+    Int m = A.Height();
+    Int n = A.Width();
+    Int mLocA = A.LocalHeight();
+    Int nLocA = A.LocalWidth();
+    const bool inAGrid = A.Participating();
 
     mpi::Comm const& viewingCommA = A.Grid().ViewingComm();
     Int rowStrideA = A.RowStride();
@@ -1699,10 +2920,7 @@ void TranslateBetweenGridsBroadcastBasic
     const Int numSubGrids = int(B_Vector.size());
     const Int sizeA = A.Grid().VCSize();
 
-    for(Int i=0; i<numSubGrids;++i)
-    {
-        B_Vector[i]->Resize(m,n);
-    }
+    
 
 
     Int indexB = -1;
@@ -1729,6 +2947,49 @@ void TranslateBetweenGridsBroadcastBasic
     const Int rowGCD = GCD(rowStrideB, rowStrideA);
     const Int rowLCM = rowStrideB*rowStrideA / rowGCD;
     const Int myLocalRankA = A.Grid().VCRank();
+
+    SyncInfo<D1> syncGeneralMetaData = SyncInfo<D1>();
+    
+
+    Int recvMetaData[6];
+
+    Int metaData[6];
+    if(inAGrid)
+    {
+        
+        metaData[0] = m;
+        metaData[1] = n;
+        metaData[2] = mLocA;
+        metaData[3] = nLocA;     
+    }
+    else
+    {
+        metaData[0] = 0;
+        metaData[1] = 0;
+        metaData[2] = 0;
+        metaData[3] = 0;
+    }
+    
+    const std::vector<Int> sendMetaData (metaData,metaData + 4 );
+
+    
+
+
+    if(sizeA != sizeB*B_Vector.size())
+    {
+        mpi::AllReduce( sendMetaData.data(), recvMetaData, 4, mpi::MAX, viewingCommA,syncGeneralMetaData);
+        Synchronize(syncGeneralMetaData);
+
+        m = recvMetaData[0];
+        n = recvMetaData[1];
+        mLocA = recvMetaData[2];
+        nLocA = recvMetaData[3];
+    }
+
+    for(Int i=0; i<numSubGrids;++i)
+    {
+        B_Vector[i]->Resize(m,n);
+    }
 
 
     // Parent Subgrid Size: 4 Child Subgrid Size: 3
@@ -1765,12 +3026,11 @@ void TranslateBetweenGridsBroadcastBasic
 
     //
 
-    const bool inAGrid = A.Participating();
+    
     const bool inBGrid = indexB >=0 ? true:false;
 
     const Int maxSendSize = mLocA * nLocA;
-    simple_buffer<T,D1> send_buf(inAGrid ? maxSendSize : 0, syncInfoA);
-    simple_buffer<T,D2> recv_buf(inBGrid ? maxSendSize : 0, syncInfoB);
+    simple_buffer<T,D1> send_buf(maxSendSize, syncInfoA);
     T* sendBuf = send_buf.data();
     //T* recvBuf = recv_buf.data();
 
@@ -1950,12 +3210,48 @@ template void TranslateBetweenGridsSliceGatherOptComm<double, Device::CPU,Device
 template void TranslateBetweenGridsSliceGatherOptComm<double, Device::GPU,Device::GPU> (DistMatrix<double,STAR,VC,ELEMENT,Device::GPU> const& , std::vector<std::unique_ptr<AbstractDistMatrix<double>>>& , int ,  mpi::Comm const& , SyncInfo<Device::GPU> & );
 
 
+template void TranslateBetweenGridsSliceGatherParentSmall<double, Device::CPU,Device::CPU> (DistMatrix<double,STAR,VC,ELEMENT,Device::CPU> const& , std::vector<std::unique_ptr<AbstractDistMatrix<double>>>& , int ,  mpi::Comm const& , SyncInfo<Device::CPU> & );
+template void TranslateBetweenGridsSliceGatherParentSmall<double, Device::GPU,Device::GPU> (DistMatrix<double,STAR,VC,ELEMENT,Device::GPU> const& , std::vector<std::unique_ptr<AbstractDistMatrix<double>>>& , int ,  mpi::Comm const& , SyncInfo<Device::GPU> & );
+template void TranslateBetweenGridsScatterCommParentSmall<double, Device::CPU,Device::CPU> (DistMatrix<double,STAR,VC,ELEMENT,Device::CPU> const& , std::vector<std::unique_ptr<AbstractDistMatrix<double>>>& , int ,  mpi::Comm const& , SyncInfo<Device::CPU> & );
+template void TranslateBetweenGridsScatterCommParentSmall<double, Device::GPU,Device::GPU> (DistMatrix<double,STAR,VC,ELEMENT,Device::GPU> const& , std::vector<std::unique_ptr<AbstractDistMatrix<double>>>& , int ,  mpi::Comm const& , SyncInfo<Device::GPU> & );
+
+
+template void TranslateBetweenGridsSliceGatherParentSmall<float, Device::CPU,Device::CPU> (DistMatrix<float,STAR,VC,ELEMENT,Device::CPU> const& , std::vector<std::unique_ptr<AbstractDistMatrix<float>>>& , int ,  mpi::Comm const& , SyncInfo<Device::CPU> & );
+template void TranslateBetweenGridsSliceGatherParentSmall<float, Device::GPU,Device::GPU> (DistMatrix<float,STAR,VC,ELEMENT,Device::GPU> const& , std::vector<std::unique_ptr<AbstractDistMatrix<float>>>& , int ,  mpi::Comm const& , SyncInfo<Device::GPU> & );
+template void TranslateBetweenGridsScatterCommParentSmall<float, Device::CPU,Device::CPU> (DistMatrix<float,STAR,VC,ELEMENT,Device::CPU> const& , std::vector<std::unique_ptr<AbstractDistMatrix<float>>>& , int ,  mpi::Comm const& , SyncInfo<Device::CPU> & );
+template void TranslateBetweenGridsScatterCommParentSmall<float, Device::GPU,Device::GPU> (DistMatrix<float,STAR,VC,ELEMENT,Device::GPU> const& , std::vector<std::unique_ptr<AbstractDistMatrix<float>>>& , int ,  mpi::Comm const& , SyncInfo<Device::GPU> & );
+
+
+template void TranslateBetweenGridsScatterCommSameSizeSubGrids<double, Device::CPU,Device::CPU> (DistMatrix<double,STAR,VC,ELEMENT,Device::CPU> const& , std::vector<std::unique_ptr<AbstractDistMatrix<double>>>& , int ,  mpi::Comm const& , SyncInfo<Device::CPU> & );
+template void TranslateBetweenGridsScatterCommSameSizeSubGrids<double, Device::GPU,Device::GPU> (DistMatrix<double,STAR,VC,ELEMENT,Device::GPU> const& , std::vector<std::unique_ptr<AbstractDistMatrix<double>>>& , int ,  mpi::Comm const& , SyncInfo<Device::GPU> & );
+template void TranslateBetweenGridsScatterCommSameSizeSubGrids<float, Device::CPU,Device::CPU> (DistMatrix<float,STAR,VC,ELEMENT,Device::CPU> const& , std::vector<std::unique_ptr<AbstractDistMatrix<float>>>& , int ,  mpi::Comm const& , SyncInfo<Device::CPU> & );
+template void TranslateBetweenGridsScatterCommSameSizeSubGrids<float, Device::GPU,Device::GPU> (DistMatrix<float,STAR,VC,ELEMENT,Device::GPU> const& , std::vector<std::unique_ptr<AbstractDistMatrix<float>>>& , int ,  mpi::Comm const& , SyncInfo<Device::GPU> & );
+
+template void TranslateBetweenGridsSliceBroadcastCommSameSizeSubGrids<double, Device::CPU,Device::CPU> (DistMatrix<double,STAR,VC,ELEMENT,Device::CPU> const& , std::vector<std::unique_ptr<AbstractDistMatrix<double>>>& , int ,  mpi::Comm const& , SyncInfo<Device::CPU> & );
+template void TranslateBetweenGridsSliceBroadcastCommSameSizeSubGrids<double, Device::GPU,Device::GPU> (DistMatrix<double,STAR,VC,ELEMENT,Device::GPU> const& , std::vector<std::unique_ptr<AbstractDistMatrix<double>>>& , int ,  mpi::Comm const& , SyncInfo<Device::GPU> & );
+template void TranslateBetweenGridsSliceBroadcastCommSameSizeSubGrids<float, Device::CPU,Device::CPU> (DistMatrix<float,STAR,VC,ELEMENT,Device::CPU> const& , std::vector<std::unique_ptr<AbstractDistMatrix<float>>>& , int ,  mpi::Comm const& , SyncInfo<Device::CPU> & );
+template void TranslateBetweenGridsSliceBroadcastCommSameSizeSubGrids<float, Device::GPU,Device::GPU> (DistMatrix<float,STAR,VC,ELEMENT,Device::GPU> const& , std::vector<std::unique_ptr<AbstractDistMatrix<float>>>& , int ,  mpi::Comm const& , SyncInfo<Device::GPU> & );
+
+
+
+
 template void TranslateBetweenGridsScatterComm<float, Device::CPU,Device::CPU> (DistMatrix<float,STAR,VC,ELEMENT,Device::CPU> const& , std::vector<std::unique_ptr<AbstractDistMatrix<float>>>& , int ,  mpi::Comm const& , SyncInfo<Device::CPU> & );
 template void TranslateBetweenGridsGatherComm<float, Device::CPU,Device::CPU> (DistMatrix<float,STAR,VC,ELEMENT,Device::CPU> & , std::vector<std::unique_ptr<AbstractDistMatrix<float>>>& , int ,  mpi::Comm const& , SyncInfo<Device::CPU> & );
 template void TranslateBetweenGridsScatterComm<float, Device::GPU,Device::GPU> (DistMatrix<float,STAR,VC,ELEMENT,Device::GPU> const& , std::vector<std::unique_ptr<AbstractDistMatrix<float>>>& , int ,  mpi::Comm const& , SyncInfo<Device::GPU> & );
 template void TranslateBetweenGridsGatherComm<float, Device::GPU,Device::GPU> (DistMatrix<float,STAR,VC,ELEMENT,Device::GPU> & , std::vector<std::unique_ptr<AbstractDistMatrix<float>>>& , int ,  mpi::Comm const& , SyncInfo<Device::GPU> & );
 template void TranslateBetweenGridsSliceGatherOptComm<float, Device::CPU,Device::CPU> (DistMatrix<float,STAR,VC,ELEMENT,Device::CPU> const& , std::vector<std::unique_ptr<AbstractDistMatrix<float>>>& , int ,  mpi::Comm const& , SyncInfo<Device::CPU> & );
 template void TranslateBetweenGridsSliceGatherOptComm<float, Device::GPU,Device::GPU> (DistMatrix<float,STAR,VC,ELEMENT,Device::GPU> const& , std::vector<std::unique_ptr<AbstractDistMatrix<float>>>& , int ,  mpi::Comm const& , SyncInfo<Device::GPU> & );
+
+template void TranslateBetweenGridsGatherCommSameSizeSubGrids<double, Device::CPU,Device::CPU> (DistMatrix<double,STAR,VC,ELEMENT,Device::CPU> & , std::vector<std::unique_ptr<AbstractDistMatrix<double>>>& , int ,  mpi::Comm const& , SyncInfo<Device::CPU> & );
+template void TranslateBetweenGridsGatherCommSameSizeSubGrids<double, Device::GPU,Device::GPU> (DistMatrix<double,STAR,VC,ELEMENT,Device::GPU> & , std::vector<std::unique_ptr<AbstractDistMatrix<double>>>& , int ,  mpi::Comm const& , SyncInfo<Device::GPU> & );
+template void TranslateBetweenGridsGatherCommSameSizeSubGrids<float, Device::CPU,Device::CPU> (DistMatrix<float,STAR,VC,ELEMENT,Device::CPU> & , std::vector<std::unique_ptr<AbstractDistMatrix<float>>>& , int ,  mpi::Comm const& , SyncInfo<Device::CPU> & );
+template void TranslateBetweenGridsGatherCommSameSizeSubGrids<float, Device::GPU,Device::GPU> (DistMatrix<float,STAR,VC,ELEMENT,Device::GPU> & , std::vector<std::unique_ptr<AbstractDistMatrix<float>>>& , int ,  mpi::Comm const& , SyncInfo<Device::GPU> & );
+
+template void TranslateBetweenGridsAllGatherCommSameSizeSubGrids<double, Device::CPU,Device::CPU> (DistMatrix<double,STAR,VC,ELEMENT,Device::CPU> & , std::vector<std::unique_ptr<AbstractDistMatrix<double>>>& , int ,  mpi::Comm const& , SyncInfo<Device::CPU> & );
+template void TranslateBetweenGridsAllGatherCommSameSizeSubGrids<double, Device::GPU,Device::GPU> (DistMatrix<double,STAR,VC,ELEMENT,Device::GPU> & , std::vector<std::unique_ptr<AbstractDistMatrix<double>>>& , int ,  mpi::Comm const& , SyncInfo<Device::GPU> & );
+template void TranslateBetweenGridsAllGatherCommSameSizeSubGrids<float, Device::CPU,Device::CPU> (DistMatrix<float,STAR,VC,ELEMENT,Device::CPU> & , std::vector<std::unique_ptr<AbstractDistMatrix<float>>>& , int ,  mpi::Comm const& , SyncInfo<Device::CPU> & );
+template void TranslateBetweenGridsAllGatherCommSameSizeSubGrids<float, Device::GPU,Device::GPU> (DistMatrix<float,STAR,VC,ELEMENT,Device::GPU> & , std::vector<std::unique_ptr<AbstractDistMatrix<float>>>& , int ,  mpi::Comm const& , SyncInfo<Device::GPU> & );
+
 
 template void TranslateBetweenGridsSliceColVector<double, Device::CPU,Device::CPU> (DistMatrix<double,STAR,VC,ELEMENT,Device::CPU> const& , std::vector<std::unique_ptr<AbstractDistMatrix<double>>>& );
 template void TranslateBetweenGridsSliceColVector<double, Device::GPU,Device::GPU> (DistMatrix<double,STAR,VC,ELEMENT,Device::GPU> const& , std::vector<std::unique_ptr<AbstractDistMatrix<double>>>& );
