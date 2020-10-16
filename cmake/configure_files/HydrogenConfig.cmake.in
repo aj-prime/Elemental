@@ -53,7 +53,7 @@ if (_HYDROGEN_HAVE_ALUMINUM)
       "Hydrogen expects NCCL2 support "
       "but Aluminum does not have NCCL2 support.")
   endif ()
-  if (_HYDROGEN_HAVE_AL_MPI_CUDA AND NOT AL_HAS_HOST_TRANSFER)
+  if (_HYDROGEN_HAVE_AL_HOST_XFER AND NOT AL_HAS_HOST_TRANSFER)
     message(FATAL_ERROR
       "Hydrogen expects HostTransfer support "
       "but Aluminum does not have HostTransfer support.")
@@ -100,7 +100,8 @@ if (_HYDROGEN_HAVE_CUDA)
   endif ()
 
   foreach (lib IN LISTS CUDA_CUBLAS_LIBRARIES CUDA_LIBRARIES
-      CUDA_CUDA_LIBRARY CUB_LIBRARIES NVML_LIBRARIES)
+      CUDA_CUDA_LIBRARY CUB_LIBRARIES NVML_LIBRARIES
+      CUDA_cusolver_LIBRARY)
 
     if (lib)
       list(APPEND _CUDA_TOOLKIT_LIBS ${lib})
@@ -113,6 +114,12 @@ if (_HYDROGEN_HAVE_CUDA)
 
   set_property(TARGET cuda::toolkit PROPERTY
     INTERFACE_INCLUDE_DIRECTORIES "${CUDA_INCLUDE_DIRS}")
+
+  set_property(TARGET cuda::toolkit PROPERTY
+    INTERFACE_COMPILE_OPTIONS
+    $<$<COMPILE_LANGUAGE:CUDA>:-arch=sm_60>
+    $<$<COMPILE_LANGUAGE:CUDA>:--expt-extended-lambda>)
+
 endif ()
 
 set(HYDROGEN_HAVE_HALF @HYDROGEN_HAVE_HALF@)
